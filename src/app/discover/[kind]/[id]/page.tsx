@@ -1,0 +1,2 @@
+import { DiscoveredPage } from '@/components/discovered-page';
+export default async function Page({params,searchParams}:{params:Promise<{kind:string;id:string}>;searchParams:Promise<{name?:string;subtitle?:string}>}){const{kind,id}=await params;const query=await searchParams;return <DiscoveredPage kind={kind} id={id} name={query.name??'Uncached music'} subtitle={query.subtitle??'MusicBrainz result'}/>;}

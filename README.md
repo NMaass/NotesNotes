@@ -2,7 +2,7 @@
 
 **A public journal for close listening.** Write about what music evokes, how it is made, and what it reminds you of—without reducing it to a rating.
 
-Resonote is a production-shaped MVP built with Next.js, React, TypeScript, Tiptap, Radix, Zustand, MusicBrainz, optional Supabase, and Cloudflare OpenNext.
+Resonote is a production-shaped MVP built with Next.js, React, TypeScript, Tiptap, Radix, Zustand, MusicBrainz, and an all-Cloudflare data plane (Workers + D1).
 
 ## Start with no accounts or API keys
 
@@ -39,7 +39,7 @@ No email is sent in demo mode.
 - Profile pins and a profile track.
 - Persistent YouTube and Spotify iframe playback. Play/pause does not key-remount the active player.
 - Local-first search plus a throttled, server-side MusicBrainz search adapter.
-- Supabase email OTP, Postgres schema, RLS, seed data, public-profile loading, and serialized client synchronization.
+- Passwordless email-OTP accounts with server-side sessions, a Cloudflare D1 schema for accounts and imports, public-profile loading through API routes, and serialized client synchronization.
 - Cloudflare Workers deployment through OpenNext.
 - Unit, data-graph, geometry, focus, persistence, reference-insertion, player-lifecycle, and reduced-motion test coverage.
 
@@ -63,7 +63,7 @@ Canonical `/music/...` pages show community context. `@handle/...` pages show on
 ```text
 Next.js App Router
 ├── demo mode: Zustand + localStorage
-├── shared mode: Supabase Auth + Postgres + RLS
+├── cloud mode: OTP sessions + Cloudflare D1 via /api routes
 ├── normalized local music catalog
 ├── server-side MusicBrainz search adapter
 ├── Cover Art Archive release-group images
@@ -77,9 +77,9 @@ MusicBrainz **release groups** are the product-level album identity. Exact press
 
 Every item in the seeded catalog has a complete, interactive page and can be liked, journaled, linked, logged, pinned, tagged, played, and collected.
 
-Wider MusicBrainz results also appear in search. A remote result currently opens a discovery page rather than being imported automatically. A correct import needs to resolve and persist the artist, release group, recording, aliases, and cover art together. The schema is ready for that server-side import worker, but the worker is not included in this MVP.
+Wider MusicBrainz results also appear in search. A remote result opens a discovery page with an **Import** action. The import worker resolves the artist, release group, full tracklist, and cover art together before creating any pages — no orphan songs, no duplicate album editions, no journal entries attached to unstable temporary identifiers.
 
-This boundary avoids orphan songs, duplicate album editions, and journal entries attached to unstable temporary identifiers.
+In demo mode, imports persist in the importing browser's catalog (shelf, search, journaling). When a D1 database is bound (`wrangler d1`), imports are written into the shared catalog for everyone automatically; see `docs/API_KEYS.md`. Aliases and genre tags are not yet resolved during import.
 
 ## Setup
 

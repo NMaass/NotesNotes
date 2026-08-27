@@ -1,0 +1,1 @@
+export default function Loading(){return <div className="page-shell page-loading" aria-label="Loading"><div className="loading-block loading-block--hero"/><div className="loading-block"/><div className="loading-block"/></div>;}
