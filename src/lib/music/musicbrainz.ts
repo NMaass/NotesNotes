@@ -18,13 +18,32 @@ async function contactEmail(): Promise<string> {
   return process.env.MUSICBRAINZ_CONTACT_EMAIL ?? 'local-demo@example.invalid';
 }
 
+const TRANSIENT = new Set([502, 503, 504]);
+
 async function throttledFetch(url: string) {
   const task = queue.then(async () => {
-    const wait = Math.max(0, 1050 - (Date.now() - lastRequestAt));
-    if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
-    lastRequestAt = Date.now();
     const contact = await contactEmail();
-    return fetch(url, { headers: { Accept: 'application/json', 'User-Agent': `Resonote/0.1 (${contact})` }, next: { revalidate: 60 * 60 * 24 } });
+    // MusicBrainz flakes occasionally (502/503/520). Stay in the queue and retry
+    // with backoff so one rough response never fails an import or a search.
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const wait = Math.max(0, 1050 - (Date.now() - lastRequestAt));
+      if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
+      lastRequestAt = Date.now();
+      let response: Response;
+      try {
+        response = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': `Resonote/0.1 (${contact})` }, next: { revalidate: 60 * 60 * 24 } });
+      } catch {
+        if (attempt === 3) throw new Error('MusicBrainz is unreachable right now.');
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        continue;
+      }
+      if (TRANSIENT.has(response.status) && attempt < 3) {
+        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        continue;
+      }
+      return response;
+    }
+    throw new Error('MusicBrainz kept failing after retries.');
   });
   queue = task.then(() => undefined, () => undefined);
   return task;

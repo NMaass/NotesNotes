@@ -582,3 +582,8 @@ body:has(.player-disc-wrap) #main-content { padding-bottom: 130px; }
   .player-disc-arm { transition: none !important; }
 }
 .persistent-player--hidden { transform: translateX(-50%) translateY(calc(100% + 24px)); pointer-events: none; }
+
+/* Genre mosaic — a genre's cover is the covers it gathers */
+.genre-mosaic { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3px; width: min(72vw, 390px); aspect-ratio: 1; border-radius: 6px; overflow: hidden; border: 1px solid rgba(233,231,226,.14); box-shadow: 0 10px 30px rgba(0,0,0,.4); }
+.genre-mosaic img { width: 100%; height: 100%; object-fit: cover; }
+.genre-mosaic img:only-child { grid-column: 1 / -1; grid-row: 1 / -1; }

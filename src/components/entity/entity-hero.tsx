@@ -14,7 +14,7 @@ import { ProfileTrackButton } from '@/components/music/profile-track-button';
 import { GenreTagDialog } from '@/components/music/genre-tag-dialog';
 import { Artwork } from '@/components/ui/artwork';
 import { Button } from '@/components/ui/button';
-import { getAlbumForSong, getArtistForEntity, getGenresForEntity } from '@/lib/data/selectors';
+import { getAlbumForSong, getArtistForEntity, getGenreCoverArt, getGenresForEntity } from '@/lib/data/selectors';
 import { useResonoteStore } from '@/lib/data/store';
 import type { CatalogEntity } from '@/lib/data/types';
 import { formatDuration } from '@/lib/utils';
@@ -27,11 +27,18 @@ export function EntityHero({ entity }: { entity: CatalogEntity }) {
   const artist = getArtistForEntity(entity);
   const album = getAlbumForSong(entity);
   const genreLinks = getGenresForEntity(entity.id, data);
+  const genreCovers = entity.kind === 'genre' ? getGenreCoverArt(entity.id, data) : [];
   const playing = entity.kind === 'song' && player.songId === entity.id && player.playing;
   const write = () => router.push(`/write/${entity.kind}/${entity.id}`);
   return (
     <header className="entity-hero">
-      <div className="entity-hero-art"><Artwork entity={entity} size="hero" record={entity.kind === 'song' || entity.kind === 'album'} playing={playing} /></div>
+      <div className="entity-hero-art">
+        {entity.kind === 'genre' && genreCovers.length ? (
+          <div className="genre-mosaic" aria-label={`Album art associated with ${entity.name}`}>
+            {genreCovers.map((cover) => <img key={cover} src={cover} alt="" loading="lazy" />)}
+          </div>
+        ) : <Artwork entity={entity} size="hero" record={entity.kind === 'song' || entity.kind === 'album'} playing={playing} />}
+      </div>
       <div className="entity-hero-copy">
         <span className="eyebrow">{entity.kind}</span>
         <h1>{entity.name}</h1>
@@ -42,7 +49,7 @@ export function EntityHero({ entity }: { entity: CatalogEntity }) {
           {entity.kind === 'song' && formatDuration(entity.durationMs) ? <><span>·</span><span>{formatDuration(entity.durationMs)}</span></> : null}
         </div>
         {entity.summary ? <p className="entity-summary">{entity.summary}</p> : null}
-        {genreLinks.length ? <div className="static-chip-row">{genreLinks.map(({ genre, source, votes }) => <Link key={genre.id} href={`/genre/${genre.slug}`}>{genre.name}{source === 'community' && votes ? <small>{votes}</small> : null}</Link>)}</div> : null}
+        {genreLinks.length ? <div className="static-chip-row">{genreLinks.map(({ genre, source, votes }) => <Link key={genre.id} href={`/genre/${genre.slug}`}>{genre.name}{votes && votes > 1 ? <small>{votes}</small> : null}</Link>)}</div> : null}
         <div className="hero-primary-actions">{entity.kind === 'song' ? <PlayButton song={entity} /> : null}<LikeButton entity={entity} /><Button variant="outline" onClick={() => { if (requireAuth(write)) write(); }}><PenLine size={18} />Write</Button></div>
         <div className="hero-secondary-actions"><AddToCollectionDialog entity={entity} />{entity.kind !== 'genre' ? <GenreTagDialog entity={entity} /> : null}<PinButton targetType="entity" targetId={entity.id} />{entity.kind === 'song' ? <><ListenDialog song={entity} /><CreditsDialog song={entity} /><FactsDialog song={entity} /><ProfileTrackButton song={entity} /></> : null}</div>
       </div>
