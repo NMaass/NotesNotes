@@ -1,5 +1,5 @@
 const mode = process.env.NEXT_PUBLIC_DATA_MODE === 'cloud' ? 'cloud' : 'demo';
-const names = ['MUSICBRAINZ_CONTACT_EMAIL', 'RESEND_API_KEY', 'AUTH_EMAIL_FROM'];
+const names = ['MUSICBRAINZ_CONTACT_EMAIL', 'RESEND_API_KEY', 'AUTH_EMAIL_FROM', 'LASTFM_API_KEY', 'ODESLI_API_KEY'];
 console.log('Resonote environment check');
 console.log(`DATA ${mode}`);
 for (const name of names) console.log(`${process.env[name] ? 'OK ' : '-- '} ${name}`);

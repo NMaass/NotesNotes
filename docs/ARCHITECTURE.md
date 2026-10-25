@@ -73,7 +73,7 @@ Remote results are not inserted automatically. A future transactional import wor
 
 Demo mode uses code `000000` with browser persistence.
 
-Cloud mode uses six-digit email OTP with a server-side session cookie. `requireAuth(intent)` preserves the exact user action. A person who starts writing about a song returns to that draft rather than being diverted into onboarding.
+Cloud mode uses six-digit email OTP with a server-side session cookie. The iOS app signs in with the same OTP and receives a bearer token instead (same `sessions` table, same expiry); see `docs/IOS_API.md`. `requireAuth(intent)` preserves the exact user action. A person who starts writing about a song returns to that draft rather than being diverted into onboarding.
 
 Public profile bundles expose likes, public entries, public collections, pins, and attributed genre assertions. Listen logs are loaded only for the signed-in owner. Private editor drafts never leave the device until publication.
 

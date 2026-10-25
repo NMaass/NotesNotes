@@ -51,7 +51,7 @@ NEXT_PUBLIC_ENABLE_REMOTE_SEARCH=true
 
 The route-handler adapter queues remote calls, leaves at least 1.05 seconds between them in one worker instance, caches successful responses through Next.js, and prevents browsers from calling MusicBrainz directly.
 
-This is search/discovery only. Automatic catalog import is not included in the MVP.
+Search/discovery runs through this adapter, and so do imports: `POST /api/music/import` and the iOS resolver (`POST /api/music/resolve`), which imports a now-playing song only when the match is certain. Requests from overlapping resolves are served earliest-deadline-first so each finishes within its ~20 s budget.
 
 ## Catalog import worker
 
@@ -82,6 +82,24 @@ Spotify is a playback provider, not Resonote’s canonical music database.
 The MVP uses known public video IDs with the YouTube iframe API. A YouTube Data API key is needed only if the application starts searching YouTube programmatically.
 
 When that is added, resolve a video on demand, let a person verify the match, cache the result, and do not spend search quota on every keystroke.
+
+## Last.fm — optional, for now-playing on iOS
+
+`GET /api/now-playing?lastfm=<username>` reads a person's current scrobble with Last.fm's `user.getRecentTracks`. That method needs an API key (no user authorization — it only reads public listening data):
+
+```dotenv
+LASTFM_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+Create one at https://www.last.fm/api/account/create. In production set it as a Worker secret (`npx wrangler secret put LASTFM_API_KEY`); locally put it in `.env.local`. Without it, the Last.fm lookup is skipped (`services: [{ service: 'lastfm', status: 'not-configured' }]`) and ListenBrainz still works. ListenBrainz needs no key.
+
+## Odesli / song.link — optional
+
+Shared song links (`POST /api/music/resolve { url }`) are read from each provider without credentials: Spotify's embed page and oEmbed, the iTunes lookup API, YouTube oEmbed, and song.link page data. Odesli's public API now answers `401 PUBLIC_API_ACCESS_DEPRECATED`; if you obtain a key it is used first:
+
+```dotenv
+ODESLI_API_KEY=
+```
 
 ## Cloudflare
 

@@ -5,7 +5,7 @@ import { CollectionPage } from '@/components/profile/collection-page';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useResonoteStore } from '@/lib/data/store';
 import { loadProfileBundleByHandle } from '@/lib/data/cloud-sync';
-import { registerImportedCatalog } from '@/lib/data/imported-catalog';
+import { hasImportedRows, registerImportedCatalog } from '@/lib/data/imported-catalog';
 import { isCloudMode } from '@/lib/data/config';
 
 export function CollectionRoute({ handle, slug }: { handle: string; slug: string }) {
@@ -31,7 +31,7 @@ export function CollectionRoute({ handle, slug }: { handle: string; slug: string
       .then((bundle) => {
         if (cancelled) return;
         const catalog = bundle.catalog;
-        if (catalog && (catalog.artists.length || catalog.albums.length || catalog.songs.length)) {
+        if (hasImportedRows(catalog)) {
           // Shared-catalog entities referenced by this person's writing must exist
           // before their page renders, including for signed-out visitors.
           registerImportedCatalog(catalog);

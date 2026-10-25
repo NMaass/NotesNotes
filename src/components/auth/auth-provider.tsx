@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { getActiveProfile, useResonoteStore } from '@/lib/data/store';
 import { isCloudMode } from '@/lib/data/config';
 import type { CloudBundle } from '@/lib/data/cloud-sync';
-import type { ImportedCatalogBundle } from '@/lib/data/imported-catalog';
+import { hasImportedRows, type ImportedCatalogBundle } from '@/lib/data/imported-catalog';
 
 interface AuthContextValue {
   profile: ReturnType<typeof getActiveProfile>;
@@ -23,7 +23,7 @@ function applyBundle(bundle: CloudBundle | null) {
   if (!bundle) return;
   const store = useResonoteStore.getState();
   const catalog: ImportedCatalogBundle = bundle.catalog ?? { artists: [], albums: [], songs: [] };
-  if (catalog.artists.length || catalog.albums.length || catalog.songs.length) {
+  if (hasImportedRows(catalog)) {
     store.importCatalogBundle(catalog);
   }
   store.signInProfile({

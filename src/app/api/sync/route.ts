@@ -1,14 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { currentUser } from '@/lib/server/auth';
 import { getDb } from '@/lib/server/db';
-import { saveCollection, saveEntry, saveGenreAssertion, saveLike, saveListen, savePin, saveProfileFields } from '@/lib/server/repo';
+import { deleteCollection, deleteEntry, OwnershipError, saveCollection, saveEntry, saveGenreAssertion, saveLike, saveListen, savePin, saveProfileFields } from '@/lib/server/repo';
 import type { Collection, EntityKind, JournalEntry, ListenLog, ProfilePin, Profile } from '@/lib/data/types';
 
 export const runtime = 'nodejs';
 
+function hasId(value: unknown): value is { id: string } {
+  return Boolean(value) && typeof value === 'object' && typeof (value as { id?: unknown }).id === 'string' && Boolean((value as { id: string }).id);
+}
+
+/** A constraint the same request will hit again (a duplicate collection name, say): not worth retrying. */
+function isConstraintError(error: unknown): boolean {
+  return /SQLITE_CONSTRAINT|UNIQUE constraint|FOREIGN KEY constraint/i.test(error instanceof Error ? error.message : String(error));
+}
+
 /**
  * Single authorized write surface. The session user is the only identity the
  * server trusts; profileId fields in payloads are ignored.
+ *
+ * Every op is safe to resend (the native outbox retries after timeouts):
+ * replays succeed without duplicating anything, deletes of rows that are already
+ * gone succeed, and a write the server will never accept answers 4xx, never 5xx.
  */
 export async function POST(request: NextRequest) {
   if (!(await getDb())) return NextResponse.json({ ok: false, error: 'Cloud data is not configured here.' }, { status: 503 });
@@ -44,14 +57,33 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true });
       }
       case 'entry': {
+        if (!hasId(body.entry)) return NextResponse.json({ ok: false, error: 'An entry with an id is required.' }, { status: 400 });
         await saveEntry(userId, body.entry as JournalEntry);
         return NextResponse.json({ ok: true });
       }
+      case 'delete-entry': {
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) return NextResponse.json({ ok: false, error: 'An id is required.' }, { status: 400 });
+        // Already gone counts as done; someone else's entry is reported as missing, not revealed.
+        if ((await deleteEntry(userId, id)) === 'not-yours') return NextResponse.json({ ok: false, error: 'Entry not found.' }, { status: 404 });
+        return NextResponse.json({ ok: true });
+      }
+      case 'delete-collection': {
+        const id = typeof body.id === 'string' ? body.id : '';
+        if (!id) return NextResponse.json({ ok: false, error: 'An id is required.' }, { status: 400 });
+        if ((await deleteCollection(userId, id)) === 'not-yours') return NextResponse.json({ ok: false, error: 'Collection not found.' }, { status: 404 });
+        return NextResponse.json({ ok: true });
+      }
       case 'listen': {
-        await saveListen(userId, body.listen as ListenLog);
+        const listen = body.listen as Partial<ListenLog> | undefined;
+        if (!listen || typeof listen.songId !== 'string' || !listen.songId || typeof listen.listenedAt !== 'string') {
+          return NextResponse.json({ ok: false, error: 'A listen needs a songId and listenedAt.' }, { status: 400 });
+        }
+        await saveListen(userId, listen as ListenLog);
         return NextResponse.json({ ok: true });
       }
       case 'collection': {
+        if (!hasId(body.collection)) return NextResponse.json({ ok: false, error: 'A collection with an id is required.' }, { status: 400 });
         await saveCollection(userId, body.collection as Collection);
         return NextResponse.json({ ok: true });
       }
@@ -82,6 +114,11 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ ok: false, error: 'Unknown sync operation.' }, { status: 400 });
   } catch (error) {
+    if (error instanceof OwnershipError) return NextResponse.json({ ok: false, error: error.message }, { status: 403 });
+    if (isConstraintError(error)) {
+      const message = body.op === 'collection' ? 'You already have a collection with that name.' : 'That change conflicts with something already saved.';
+      return NextResponse.json({ ok: false, error: message }, { status: 409 });
+    }
     return NextResponse.json(
       { ok: false, error: error instanceof Error ? error.message : 'Sync failed.' },
       { status: 500 },

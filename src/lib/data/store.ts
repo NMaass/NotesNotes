@@ -4,7 +4,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import { toast } from 'sonner';
 import { seedDemoData } from '@/lib/data/catalog';
-import { emptyImportedCatalog, registerImportedCatalog, type ImportedCatalogBundle } from '@/lib/data/imported-catalog';
+import { emptyImportedCatalog, registerImportedCatalog, withoutSeedRows, type ImportedCatalogBundle } from '@/lib/data/imported-catalog';
 import { getEntityById } from '@/lib/data/selectors';
 import type {
   Collection,
@@ -149,13 +149,16 @@ export const useResonoteStore = create<ResonoteState>()(
       player: { songId: null, playing: false, expanded: false, pendingSeekMs: null },
       importedEntities: emptyImportedCatalog(),
       setHydrated: (hydrated) => set({ hydrated }),
-      importCatalogBundle: (bundle) => {
+      importCatalogBundle: (incoming) => {
+        // Seeded rows already live in code; keep only D1 rows in the persisted import list.
+        const bundle = withoutSeedRows(incoming);
         registerImportedCatalog(bundle);
         set((state) => ({
           importedEntities: {
             artists: [...state.importedEntities.artists.filter((a) => !bundle.artists.some((b) => b.id === a.id)), ...bundle.artists],
             albums: [...state.importedEntities.albums.filter((a) => !bundle.albums.some((b) => b.id === a.id)), ...bundle.albums],
             songs: [...state.importedEntities.songs.filter((a) => !bundle.songs.some((b) => b.id === a.id)), ...bundle.songs],
+            genres: [...(state.importedEntities.genres ?? []).filter((a) => !(bundle.genres ?? []).some((b) => b.id === a.id)), ...(bundle.genres ?? [])],
           },
         }));
       },
@@ -431,6 +434,7 @@ export const useResonoteStore = create<ResonoteState>()(
             artists: saved.importedEntities?.artists ?? [],
             albums: saved.importedEntities?.albums ?? [],
             songs: saved.importedEntities?.songs ?? [],
+            genres: saved.importedEntities?.genres ?? [],
           },
         };
       },

@@ -12,3 +12,10 @@ test-results/
 *.tsbuildinfo
 .DS_Store
 .audit/
+
+# iOS
+ios/**/.build/
+ios/**/.swiftpm/
+ios/**/xcuserdata/
+ios/**/*.xcuserstate
+ios/DerivedData/

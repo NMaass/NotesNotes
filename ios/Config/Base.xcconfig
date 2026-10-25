@@ -1,0 +1,18 @@
+// Build settings shared by every Resonote target (app, widgets, share extension).
+// Compiler and target settings live in project.yml; this file holds the values a
+// person might change. Override any of them in Signing.xcconfig, included last.
+
+// Identifiers. The widget and share extensions append .widgets and .share.
+RESONOTE_BUNDLE_ID = dev.nmaass.resonote
+// Shared container, shared defaults, and the keychain access group for the session token.
+RESONOTE_APP_GROUP = group.dev.nmaass.resonote
+
+// The Cloudflare Worker that serves the web app and /api. `//` starts a comment in
+// xcconfig files, so `$()` (an empty expansion) keeps the double slash.
+RESONOTE_API_BASE_URL = https:/$()/resonote.nmaass.dev
+
+// One version for the app and its extensions (they must match).
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
+
+#include "Signing.xcconfig"

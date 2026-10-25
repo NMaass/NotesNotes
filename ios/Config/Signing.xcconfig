@@ -1,0 +1,13 @@
+// Set your Apple Developer team ID here (developer.apple.com → Account → Membership
+// details, or Xcode → Settings → Accounts). Setting it here survives `xcodegen`;
+// choosing a team in Xcode's Signing & Capabilities tab is lost when the project
+// is regenerated.
+DEVELOPMENT_TEAM =
+
+// Building under a different Apple Developer account? Bundle ids and App Group ids
+// are global, so pick your own:
+// RESONOTE_BUNDLE_ID = com.example.resonote
+// RESONOTE_APP_GROUP = group.com.example.resonote
+
+// Point a build at another deployment of the backend:
+// RESONOTE_API_BASE_URL = https:/$()/resonote-preview.example.workers.dev

@@ -1,0 +1,212 @@
+# XcodeGen spec for Resonote for iPhone. Generate the project with `xcodegen` in ios/.
+# Resonote.xcodeproj, every Info.plist, and every .entitlements file are outputs of
+# this spec: edit them here, not in Xcode.
+name: Resonote
+minimumXcodeGenVersion: 2.46.0
+
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  groupSortPosition: top
+  projectFormat: xcode16_0
+  xcodeVersion: "26.0"
+  indentWidth: 4
+  tabWidth: 4
+  usesTabs: false
+
+# Identifiers, the API base URL, versions, and the signing team (Config/Signing.xcconfig).
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  ResonoteKit:
+    path: Packages/ResonoteKit
+
+targets:
+  Resonote:
+    type: application
+    platform: iOS
+    sources:
+      - path: Resonote
+        excludes: &generatedFiles
+          - "**/Info.plist"
+          - "**/*.entitlements"
+          - "**/*.md"
+      - path: Shared
+        excludes: *generatedFiles
+      - path: SharedIntents
+        optional: true
+        excludes: *generatedFiles
+    dependencies:
+      - package: ResonoteKit
+      - target: ResonoteWidgets
+      - target: ResonoteShare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESONOTE_BUNDLE_ID)
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        # Shared/ and SharedIntents/ code that only the app may run (matches scripts/typecheck.sh).
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) RESONOTE_APP
+        ENABLE_PREVIEWS: YES
+    info:
+      path: Resonote/Info.plist
+      properties:
+        CFBundleDisplayName: Resonote
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          # Required for App Intent scene routing (onAppIntentExecution), even with one scene.
+          UIApplicationSupportsMultipleScenes: true
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - resonote
+        NSAppleMusicUsageDescription: Resonote reads what the Music app is playing so you can write about it.
+        NSMicrophoneUsageDescription: Resonote listens for a few seconds to identify the song that's playing, only when you ask.
+        ResonoteAppGroup: $(RESONOTE_APP_GROUP)
+        ResonoteAPIBaseURL: $(RESONOTE_API_BASE_URL)
+    entitlements:
+      path: Resonote/Resonote.entitlements
+      properties:
+        # The App Group doubles as the keychain access group for the session token.
+        com.apple.security.application-groups:
+          - $(RESONOTE_APP_GROUP)
+
+  ResonoteWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ResonoteWidgets
+        excludes: *generatedFiles
+      - path: Shared
+        excludes: *generatedFiles
+      - path: SharedIntents
+        optional: true
+        excludes: *generatedFiles
+    dependencies:
+      - package: ResonoteKit
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+      - sdk: AppIntents.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESONOTE_BUNDLE_ID).widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME: WidgetBackground
+        ENABLE_PREVIEWS: YES
+    info:
+      path: ResonoteWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Resonote
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+        NSAppleMusicUsageDescription: Resonote reads what the Music app is playing so you can write about it.
+        ResonoteAppGroup: $(RESONOTE_APP_GROUP)
+        ResonoteAPIBaseURL: $(RESONOTE_API_BASE_URL)
+    entitlements:
+      path: ResonoteWidgets/ResonoteWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(RESONOTE_APP_GROUP)
+
+  ResonoteShare:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ResonoteShare
+        excludes: *generatedFiles
+      - path: Shared
+        excludes: *generatedFiles
+    dependencies:
+      - package: ResonoteKit
+      # Reloads the widget after saving a shared song.
+      - sdk: WidgetKit.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESONOTE_BUNDLE_ID).share
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: YES
+    info:
+      path: ResonoteShare/Info.plist
+      properties:
+        CFBundleDisplayName: Resonote
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UIUserInterfaceStyle: Dark
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.share-services
+          # A UIViewController subclass named ShareViewController hosts the SwiftUI sheet. No storyboard.
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).ShareViewController
+          NSExtensionAttributes:
+            NSExtensionActivationRule:
+              NSExtensionActivationSupportsWebURLWithMaxCount: 1
+              NSExtensionActivationSupportsText: true
+        ResonoteAppGroup: $(RESONOTE_APP_GROUP)
+        ResonoteAPIBaseURL: $(RESONOTE_API_BASE_URL)
+    entitlements:
+      path: ResonoteShare/ResonoteShare.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - $(RESONOTE_APP_GROUP)
+
+schemes:
+  Resonote:
+    build:
+      targets:
+        Resonote: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      coverageTargets:
+        - package: ResonoteKit/ResonoteKit
+      targets:
+        - package: ResonoteKit/ResonoteKitTests
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

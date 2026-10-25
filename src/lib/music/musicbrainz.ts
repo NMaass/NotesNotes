@@ -1,10 +1,11 @@
 import 'server-only';
 import { getCloudflareContext } from '@opennextjs/cloudflare';
 import type { Album, Artist, SearchResult, Song } from '@/lib/data/types';
+import { isAnthology, preferredRelease, type MbGenre, type MbRecording } from '@/lib/music/matching';
+import { sameTitle } from '@/lib/music/text';
 import { slugify } from '@/lib/utils';
 
 const BASE = 'https://musicbrainz.org/ws/2';
-let queue = Promise.resolve();
 let lastRequestAt = 0;
 
 async function contactEmail(): Promise<string> {
@@ -20,33 +21,102 @@ async function contactEmail(): Promise<string> {
 
 const TRANSIENT = new Set([502, 503, 504]);
 
-async function throttledFetch(url: string) {
-  const task = queue.then(async () => {
+/** Thrown instead of calling MusicBrainz when a caller's time budget has run out. */
+export class MusicBrainzDeadlineError extends Error {
+  constructor() {
+    super('MusicBrainz is busy; try again in a moment.');
+  }
+}
+
+// One request at a time per isolate, ≥1.05 s apart. Waiting callers are served
+// earliest-deadline-first (callers without a deadline count as "20 s after they
+// asked"), so when several now-playing lookups overlap the first one finishes
+// instead of all of them interleaving and missing their budgets together.
+// Each caller still performs its own fetch, in its own request context.
+const NO_DEADLINE_SLACK_MS = 20_000;
+interface Waiter { priority: number; order: number; grant: () => void }
+const waiters: Waiter[] = [];
+let busy = false;
+let order = 0;
+
+function releaseTurn() {
+  waiters.sort((a, b) => a.priority - b.priority || a.order - b.order);
+  const next = waiters.shift();
+  if (next) next.grant();
+  else busy = false;
+}
+
+async function acquireTurn(deadline?: number): Promise<void> {
+  if (!busy) {
+    busy = true;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waiter: Waiter = {
+      priority: deadline ?? Date.now() + NO_DEADLINE_SLACK_MS,
+      order: order++,
+      grant: () => {
+        if (timer) clearTimeout(timer);
+        resolve();
+      },
+    };
+    // A caller whose budget runs out while waiting leaves the line without a request.
+    if (deadline) {
+      timer = setTimeout(() => {
+        const index = waiters.indexOf(waiter);
+        if (index < 0) return;
+        waiters.splice(index, 1);
+        reject(new MusicBrainzDeadlineError());
+      }, Math.max(0, deadline - Date.now()));
+    }
+    waiters.push(waiter);
+  });
+}
+
+async function throttledFetch(url: string, deadline?: number): Promise<Response> {
+  await acquireTurn(deadline);
+  try {
     const contact = await contactEmail();
-    // MusicBrainz flakes occasionally (502/503/520). Stay in the queue and retry
+    // MusicBrainz flakes occasionally (502/503/520). Keep the turn and retry
     // with backoff so one rough response never fails an import or a search.
+    // Every wait checks the caller's deadline first: a caller whose budget is
+    // gone gives the turn back at once instead of sleeping on it.
+    const backoff = async (attempt: number) => {
+      const delay = 2000 * (attempt + 1);
+      if (deadline && Date.now() + delay > deadline) throw new MusicBrainzDeadlineError();
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    };
     for (let attempt = 0; attempt < 4; attempt += 1) {
       const wait = Math.max(0, 1050 - (Date.now() - lastRequestAt));
+      // Work whose caller already gave up must not spend the shared rate limit.
+      if (deadline && Date.now() + wait > deadline) throw new MusicBrainzDeadlineError();
       if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
       lastRequestAt = Date.now();
       let response: Response;
       try {
-        response = await fetch(url, { headers: { Accept: 'application/json', 'User-Agent': `Resonote/0.1 (${contact})` }, next: { revalidate: 60 * 60 * 24 } });
+        response = await fetch(url, {
+          headers: { Accept: 'application/json', 'User-Agent': `Resonote/0.1 (${contact})` },
+          next: { revalidate: 60 * 60 * 24 },
+          ...(deadline ? { signal: AbortSignal.timeout(Math.max(1000, deadline - Date.now())) } : {}),
+        });
       } catch {
+        // The abort at the deadline lands here too; that is the deadline, not a flaky network.
+        if (deadline && Date.now() >= deadline) throw new MusicBrainzDeadlineError();
         if (attempt === 3) throw new Error('MusicBrainz is unreachable right now.');
-        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        await backoff(attempt);
         continue;
       }
       if (TRANSIENT.has(response.status) && attempt < 3) {
-        await new Promise((resolve) => setTimeout(resolve, 2000 * (attempt + 1)));
+        await backoff(attempt);
         continue;
       }
       return response;
     }
     throw new Error('MusicBrainz kept failing after retries.');
-  });
-  queue = task.then(() => undefined, () => undefined);
-  return task;
+  } finally {
+    releaseTurn();
+  }
 }
 
 export async function searchMusicBrainz(query: string, kind: 'artist' | 'album' | 'song' = 'song'): Promise<SearchResult[]> {
@@ -110,10 +180,27 @@ export async function searchMusicBrainz(query: string, kind: 'artist' | 'album' 
 // resolved BEFORE anything is persisted, so a partial failure leaves no orphans.
 
 interface MbCreditEntry { name?: string; joinphrase?: string; artist?: { id?: string; name?: string; 'sort-name'?: string } }
-interface MbReleaseGroupRef { id?: string; title?: string; 'primary-type'?: string }
-interface MbTrack { id?: string; title?: string; position?: number; length?: number; recording?: { id?: string; title?: string; length?: number } }
+interface MbReleaseGroupRef { id?: string; title?: string; 'primary-type'?: string; 'secondary-types'?: string[] }
+interface MbTrack {
+  id?: string;
+  title?: string;
+  position?: number;
+  length?: number;
+  'artist-credit'?: MbCreditEntry[];
+  recording?: { id?: string; title?: string; length?: number; 'artist-credit'?: MbCreditEntry[] };
+}
 interface MbMedia { 'track-count'?: number; tracks?: MbTrack[] }
 interface MbRelease { id?: string; title?: string; status?: string; date?: string; media?: MbMedia[]; 'release-group'?: MbReleaseGroupRef }
+
+/** Options shared by the import resolvers. */
+export interface ImportOptions {
+  /** A recording payload already fetched with `fetchRecording`, saving a request. */
+  recording?: Record<string, unknown>;
+  /** Receives MusicBrainz community genres per imported entity id, at no extra request. */
+  genres?: Map<string, MbGenre[]>;
+  /** Epoch ms after which no further MusicBrainz request is started. */
+  deadline?: number;
+}
 
 export interface ImportBundle {
   artists: Artist[];
@@ -123,8 +210,8 @@ export interface ImportBundle {
   focusId: string;
 }
 
-async function fetchJsonOrThrow(url: string): Promise<Record<string, unknown>> {
-  const response = await throttledFetch(url);
+async function fetchJsonOrThrow(url: string, deadline?: number): Promise<Record<string, unknown>> {
+  const response = await throttledFetch(url, deadline);
   if (response.status === 404) throw new Error('MusicBrainz has no entry with that identifier.');
   if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}`);
   return response.json() as Promise<Record<string, unknown>>;
@@ -212,9 +299,19 @@ class ImportBuilder {
     return song;
   }
 
+  /** The focused song comes first in `songs`, so a client that takes the first song gets the one asked for. */
   bundle(focusKind: ImportBundle['focusKind'], focusId: string): ImportBundle {
-    return { artists: [...this.artists.values()], albums: [...this.albums.values()], songs: [...this.songs.values()], focusKind, focusId };
+    const songs = [...this.songs.values()];
+    const focusIndex = focusKind === 'song' ? songs.findIndex((song) => song.id === focusId) : -1;
+    if (focusIndex > 0) songs.unshift(...songs.splice(focusIndex, 1));
+    return { artists: [...this.artists.values()], albums: [...this.albums.values()], songs, focusKind, focusId };
   }
+}
+
+/** The credited artist for one track: its own credit, then its recording's, then the release's. */
+function trackArtist(builder: ImportBuilder, track: MbTrack, fallback: Artist): Artist {
+  const credit = creditArtist(track['artist-credit']?.[0]) ?? creditArtist(track.recording?.['artist-credit']?.[0]);
+  return credit ? builder.artist({ ...credit, country: undefined }) : fallback;
 }
 
 function rankReleases(releases: MbRelease[]): MbRelease[] {
@@ -229,20 +326,27 @@ function rankReleases(releases: MbRelease[]): MbRelease[] {
   });
 }
 
-async function resolveReleaseGroupInto(builder: ImportBuilder, rgMbid: string): Promise<Album> {
-  const group = await fetchJsonOrThrow(`${BASE}/release-group/${encodeURIComponent(rgMbid)}?inc=artist-credits&fmt=json`);
+/**
+ * Imports a release group with its tracklist. With `onlyRecording` (a song
+ * import that fell back to the whole group), an anthology contributes just that
+ * recording's track, as in resolveReleaseInto.
+ */
+async function resolveReleaseGroupInto(builder: ImportBuilder, rgMbid: string, options: ImportOptions = {}, onlyRecording?: string): Promise<Album> {
+  const { deadline } = options;
+  const group = await fetchJsonOrThrow(`${BASE}/release-group/${encodeURIComponent(rgMbid)}?inc=artist-credits+genres&fmt=json`, deadline);
   const credit = creditArtist((group['artist-credit'] as MbCreditEntry[] | undefined)?.[0]);
   if (!credit) throw new Error('That release group has no resolvable artist credit.');
   const artist = builder.artist({ ...credit, country: undefined });
+  const skipNeighbours = Boolean(onlyRecording) && isAnthology(group as MbReleaseGroupRef, credit.id);
 
-  const listing = await fetchJsonOrThrow(`${BASE}/release?release-group=${encodeURIComponent(rgMbid)}&status=official&fmt=json&limit=25`);
+  const listing = await fetchJsonOrThrow(`${BASE}/release?release-group=${encodeURIComponent(rgMbid)}&status=official&fmt=json&limit=25`, deadline);
   const candidates = rankReleases((listing.releases as MbRelease[] | undefined) ?? []).filter((release) => release.id).slice(0, 3);
   if (!candidates.length) throw new Error('No official release exists for this album yet.');
 
   // Browse listings omit media/tracklists, so probe candidates until one yields tracks.
   let album: Album | undefined;
   for (const candidate of candidates) {
-    const detail = await fetchJsonOrThrow(`${BASE}/release/${encodeURIComponent(candidate.id!)}?inc=recordings+artist-credits+media&fmt=json`);
+    const detail = await fetchJsonOrThrow(`${BASE}/release/${encodeURIComponent(candidate.id!)}?inc=recordings+artist-credits+media&fmt=json`, deadline);
     const media = (detail.media as MbMedia[] | undefined) ?? [];
     const tracks = media.flatMap((medium) => medium.tracks ?? []).filter((track) => track.recording?.id);
     if (!tracks.length) continue;
@@ -255,10 +359,12 @@ async function resolveReleaseGroupInto(builder: ImportBuilder, rgMbid: string): 
     });
     for (const track of tracks) {
       const recording = track.recording!;
+      if (skipNeighbours && recording.id !== onlyRecording) continue;
       builder.song({
         recordingId: recording.id!,
         title: track.title ?? recording.title ?? 'Unknown track',
-        artistId: artist.id,
+        // Soundtracks, splits, and compilations credit each track to its own artist.
+        artistId: trackArtist(builder, track, artist).id,
         albumId: album.id,
         trackNumber: track.position,
         durationMs: track.length ?? recording.length ?? undefined,
@@ -267,53 +373,162 @@ async function resolveReleaseGroupInto(builder: ImportBuilder, rgMbid: string): 
     break;
   }
   if (!album) throw new Error('No release of this album carries a linked tracklist on MusicBrainz.');
+  options.genres?.set(album.id, (group.genres as MbGenre[] | undefined) ?? []);
   return album;
 }
 
-export async function resolveImport(kind: 'artist' | 'album' | 'song', mbid: string): Promise<ImportBundle> {
+/**
+ * A recording with everything import and suggestions need in one request:
+ * artist credits, releases with their release groups (so the album can be
+ * chosen without a per-release lookup), and community genres.
+ */
+export async function fetchRecording(mbid: string, deadline?: number): Promise<Record<string, unknown>> {
+  return fetchJsonOrThrow(`${BASE}/recording/${encodeURIComponent(mbid)}?inc=artist-credits+releases+release-groups+genres&fmt=json`, deadline);
+}
+
+/**
+ * Recordings carrying an ISRC (usually one; occasionally several mixes), with
+ * their releases and release groups so the canonical recording can be told from
+ * a copy that only one compilation uses. The `isrc` lookup's JSON leaves
+ * releases out whatever `inc` says, so the recording search (`isrc:` field) is
+ * asked first; the lookup (which still carries first-release dates) covers a
+ * search index that has not caught up yet.
+ */
+export async function lookupIsrc(isrc: string, deadline?: number): Promise<MbRecording[]> {
+  const found = await searchRecordings(`isrc:${isrc}`, 25, deadline);
+  if (found.length) return found;
+  const response = await throttledFetch(`${BASE}/isrc/${encodeURIComponent(isrc)}?inc=artist-credits&fmt=json`, deadline);
+  if (response.status === 404) return [];
+  if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}`);
+  const payload = await response.json() as { recordings?: MbRecording[] };
+  return payload.recordings ?? [];
+}
+
+/** Raw recording search results for a Lucene query (see matching.ts). */
+export async function searchRecordings(query: string, limit = 25, deadline?: number): Promise<MbRecording[]> {
+  const response = await throttledFetch(`${BASE}/recording/?query=${encodeURIComponent(query)}&fmt=json&limit=${limit}`, deadline);
+  if (!response.ok) throw new Error(`MusicBrainz returned ${response.status}`);
+  const payload = await response.json() as { recordings?: MbRecording[] };
+  return payload.recordings ?? [];
+}
+
+/** Community genres for one MusicBrainz entity. */
+export async function fetchGenres(resource: 'recording' | 'release-group' | 'artist', mbid: string, deadline?: number): Promise<MbGenre[]> {
+  const payload = await fetchJsonOrThrow(`${BASE}/${resource}/${encodeURIComponent(mbid)}?inc=genres&fmt=json`, deadline);
+  return (payload.genres as MbGenre[] | undefined) ?? [];
+}
+
+/**
+ * Builds the album from one release that contains the recording, in a single
+ * request (tracklist, release group, and credits together). Returns undefined
+ * when that release carries no linked tracklist.
+ *
+ * Each track keeps its own artist credit; the focused recording always takes
+ * the recording's credit (`focus.artist`). From an anthology (a compilation,
+ * DJ mix, or Various Artists release) only the focused track is imported: its
+ * neighbours belong to other artists and other albums.
+ */
+async function resolveReleaseInto(builder: ImportBuilder, releaseId: string, options: ImportOptions, focus: { recordingId: string; artist: Artist }): Promise<Album | undefined> {
+  const detail = await fetchJsonOrThrow(`${BASE}/release/${encodeURIComponent(releaseId)}?inc=recordings+artist-credits+media+release-groups&fmt=json`, options.deadline);
+  const group = detail['release-group'] as (MbReleaseGroupRef & { 'first-release-date'?: string }) | undefined;
+  const credit = creditArtist((detail['artist-credit'] as MbCreditEntry[] | undefined)?.[0]);
+  const tracks = ((detail.media as MbMedia[] | undefined) ?? []).flatMap((medium) => medium.tracks ?? []).filter((track) => track.recording?.id);
+  if (!group?.id || !credit || !tracks.length) return undefined;
+  const anthology = isAnthology(group, credit.id);
+  const releaseArtist = builder.artist({ ...credit, country: undefined });
+  const album = builder.album({
+    rgId: group.id,
+    title: String(group.title ?? detail.title ?? 'Unknown album'),
+    artistId: releaseArtist.id,
+    year: Number(String(group['first-release-date'] ?? detail.date ?? '').slice(0, 4)) || undefined,
+    primaryType: group['primary-type'] ? String(group['primary-type']) : undefined,
+  });
+  for (const track of tracks) {
+    const recording = track.recording!;
+    const focused = recording.id === focus.recordingId;
+    if (anthology && !focused) continue;
+    builder.song({
+      recordingId: recording.id!,
+      title: track.title ?? recording.title ?? 'Unknown track',
+      artistId: focused ? focus.artist.id : trackArtist(builder, track, releaseArtist).id,
+      albumId: album.id,
+      trackNumber: track.position,
+      durationMs: track.length ?? recording.length ?? undefined,
+    });
+  }
+  return album;
+}
+
+export async function resolveImport(kind: 'artist' | 'album' | 'song', mbid: string, options: ImportOptions = {}): Promise<ImportBundle> {
+  const { deadline } = options;
   if (kind === 'album') {
     const builder = new ImportBuilder();
-    const album = await resolveReleaseGroupInto(builder, mbid);
+    const album = await resolveReleaseGroupInto(builder, mbid, options);
     return builder.bundle('album', album.id);
   }
 
   if (kind === 'song') {
     const builder = new ImportBuilder();
-    const recording = await fetchJsonOrThrow(`${BASE}/recording/${encodeURIComponent(mbid)}?inc=artist-credits+releases&fmt=json`);
+    const recording = options.recording ?? await fetchRecording(mbid, deadline);
     const credit = creditArtist((recording['artist-credit'] as MbCreditEntry[] | undefined)?.[0]);
     if (!credit) throw new Error('That recording has no resolvable artist credit.');
     const artist = builder.artist({ ...credit, country: undefined });
 
     const releases = (recording.releases as MbRelease[] | undefined) ?? [];
+    // Releases carry their release group, so pick the most canonical album
+    // (official studio album over single, compilation, or live) directly.
+    const preferred = preferredRelease(releases);
+    let albumId: string | undefined;
+    if (preferred?.id && preferred['release-group']?.id) {
+      // Fast path: that release's own tracklist, one request.
+      try {
+        albumId = (await resolveReleaseInto(builder, preferred.id, options, { recordingId: mbid, artist }))?.id;
+      } catch (error) {
+        if (error instanceof MusicBrainzDeadlineError) throw error;
+      }
+    }
+    let releaseGroup: { id?: string } | undefined = preferred?.['release-group'];
     const candidate = releases.find((release) => release.id);
-    let releaseGroup: MbReleaseGroupRef | undefined;
-    if (candidate?.id) {
-      const releaseDetail = await fetchJsonOrThrow(`${BASE}/release/${encodeURIComponent(candidate.id)}?inc=release-groups&fmt=json`);
+    if (!albumId && !releaseGroup?.id && candidate?.id) {
+      const releaseDetail = await fetchJsonOrThrow(`${BASE}/release/${encodeURIComponent(candidate.id)}?inc=release-groups&fmt=json`, deadline);
       releaseGroup = releaseDetail['release-group'] as MbReleaseGroupRef | undefined;
     }
 
-    let albumId: string | undefined;
-    if (releaseGroup?.id) {
+    if (!albumId && releaseGroup?.id) {
       try {
-        const album = await resolveReleaseGroupInto(builder, releaseGroup.id);
+        const album = await resolveReleaseGroupInto(builder, releaseGroup.id, options, mbid);
         albumId = album.id;
-      } catch {
+      } catch (error) {
+        if (error instanceof MusicBrainzDeadlineError) throw error;
         albumId = undefined;
       }
     }
 
-    const focused = builder.song({
+    const title = String(recording.title ?? 'Unknown recording');
+    // The chosen pressing may carry a different recording of the same track
+    // (another mix or master). Point at that album track instead of adding a
+    // second, number-less copy of the song to the album.
+    const albumTrack = albumId && !builder.songs.has(`mb-song-${mbid}`)
+      ? [...builder.songs.values()].find((song) => song.albumId === albumId && sameTitle(song.name, title))
+      : undefined;
+    const focused = albumTrack ?? builder.song({
       recordingId: mbid,
-      title: String(recording.title ?? 'Unknown recording'),
+      title,
       artistId: artist.id,
       albumId,
       durationMs: recording.length ? Number(recording.length) : undefined,
     });
+    // The recording itself is always credited to the recording's artist, never a release's.
+    if (focused.id === `mb-song-${mbid}`) focused.artistId = artist.id;
+    // inc=genres also fills the credited artist's genres: no extra request for either.
+    if (Array.isArray(recording.genres)) options.genres?.set(focused.id, recording.genres as MbGenre[]);
+    const creditedGenres = (recording['artist-credit'] as Array<{ artist?: { genres?: MbGenre[] } }> | undefined)?.[0]?.artist?.genres;
+    if (Array.isArray(creditedGenres)) options.genres?.set(artist.id, creditedGenres);
     return builder.bundle('song', focused.id);
   }
 
   const builder = new ImportBuilder();
-  const payload = await fetchJsonOrThrow(`${BASE}/artist/${encodeURIComponent(mbid)}?inc=aliases&fmt=json`);
+  const payload = await fetchJsonOrThrow(`${BASE}/artist/${encodeURIComponent(mbid)}?inc=aliases&fmt=json`, deadline);
   if (!payload.id || !payload.name) throw new Error('MusicBrainz has no artist with that identifier.');
   const artist = builder.artist({
     id: String(payload.id),

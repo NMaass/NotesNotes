@@ -1,17 +1,17 @@
 import { albums, artists, catalog, entityGenres, genres, seedDemoData, songCredits, songFacts, songs } from '@/lib/data/catalog';
-import { importedAlbumList, importedArtistList, importedCatalog, importedSongList } from '@/lib/data/imported-catalog';
-import type { CatalogEntity, Collection, DemoData, EntityKind, JournalEntry, Profile, SearchResult } from '@/lib/data/types';
+import { importedAlbumList, importedArtistList, importedCatalog, importedGenreList, importedSongList } from '@/lib/data/imported-catalog';
+import type { CatalogEntity, Collection, DemoData, EntityKind, Genre, JournalEntry, Profile, SearchResult } from '@/lib/data/types';
 import { slugify } from '@/lib/utils';
-const aliases: Record<string,string[]> = {'20000000-0000-0000-0000-000000000002':['mbv'],'30000000-0000-0000-0000-000000000005':["hurry up we're dreaming",'hurry up were dreaming'],'40000000-0000-0000-0000-000000000008':['eiirp'],'20000000-0000-0000-0000-000000000003':['smashing pumpkins']};
+export const aliases: Record<string,string[]> = {'20000000-0000-0000-0000-000000000002':['mbv'],'30000000-0000-0000-0000-000000000005':["hurry up we're dreaming",'hurry up were dreaming'],'40000000-0000-0000-0000-000000000008':['eiirp'],'20000000-0000-0000-0000-000000000003':['smashing pumpkins']};
 const normalize=(value:string)=>value.normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 export const catalogLists={
   get artists(){return[...artists,...importedArtistList()];},
   get albums(){return[...albums,...importedAlbumList()];},
   get songs(){return[...songs,...importedSongList()];},
-  genres,
+  get genres(){return[...genres,...importedGenreList()];},
 };
-export function getEntity(kind:EntityKind,id:string):CatalogEntity|undefined { if(kind==='artist')return catalog.artists.get(id)??importedCatalog.artists.get(id); if(kind==='album')return catalog.albums.get(id)??importedCatalog.albums.get(id); if(kind==='song')return catalog.songs.get(id)??importedCatalog.songs.get(id); return catalog.genres.get(id); }
-export function getEntityById(id:string):CatalogEntity|undefined { return catalog.artists.get(id)??catalog.albums.get(id)??catalog.songs.get(id)??catalog.genres.get(id)??importedCatalog.artists.get(id)??importedCatalog.albums.get(id)??importedCatalog.songs.get(id); }
+export function getEntity(kind:EntityKind,id:string):CatalogEntity|undefined { if(kind==='artist')return catalog.artists.get(id)??importedCatalog.artists.get(id); if(kind==='album')return catalog.albums.get(id)??importedCatalog.albums.get(id); if(kind==='song')return catalog.songs.get(id)??importedCatalog.songs.get(id); return catalog.genres.get(id)??importedCatalog.genres.get(id); }
+export function getEntityById(id:string):CatalogEntity|undefined { return catalog.artists.get(id)??catalog.albums.get(id)??catalog.songs.get(id)??catalog.genres.get(id)??importedCatalog.artists.get(id)??importedCatalog.albums.get(id)??importedCatalog.songs.get(id)??importedCatalog.genres.get(id); }
 export function getProfileByHandle(handle:string,data:DemoData=seedDemoData){return data.profiles.find((p)=>p.handle.toLowerCase()===handle.replace(/^@/,'').toLowerCase());}
 export function getArtistForEntity(entity:CatalogEntity){if(entity.kind==='artist')return entity;if(entity.kind==='album'||entity.kind==='song')return catalog.artists.get(entity.artistId)??importedCatalog.artists.get(entity.artistId);return undefined;}
 export function getAlbumForSong(entity:CatalogEntity){if(entity.kind!=='song'||!entity.albumId)return undefined;return catalog.albums.get(entity.albumId)??importedCatalog.albums.get(entity.albumId);}
@@ -20,7 +20,7 @@ function albumSlugFor(albumId:string|undefined){if(!albumId)return undefined;ret
 export function hrefForEntity(entity:CatalogEntity){if(entity.kind==='genre')return `/genre/${entity.slug}`;if(entity.kind==='artist')return `/music/${entity.slug}`;if(entity.kind==='album')return `/music/${artistSlugFor(entity.artistId)}/${entity.slug}`;return `/music/${artistSlugFor(entity.artistId)}${albumSlugFor(entity.albumId)?`/${albumSlugFor(entity.albumId)}/`:''}/${entity.slug}`;}
 export function profileHrefForEntity(profile:Profile,entity:CatalogEntity){return `/@${profile.handle}${hrefForEntity(entity).replace(/^\/music/,'')}`;}
 export function getEntityByPath(segments:string[]){const allArtists=[...artists,...importedArtistList()];const allAlbums=[...albums,...importedAlbumList()];const allSongs=[...songs,...importedSongList()];if(segments.length===1)return allArtists.find((a)=>a.slug===segments[0]);if(segments.length===2)return allAlbums.find((a)=>a.slug===segments[1]&&allArtists.find((a2)=>a2.id===a.artistId)?.slug===segments[0]);if(segments.length>=3)return allSongs.find((s)=>s.slug===segments[2]&&allArtists.find((a)=>a.id===s.artistId)?.slug===segments[0]&&allAlbums.find((al)=>al.id===s.albumId)?.slug===segments[1]);return undefined;}
-export function getProfileEntityByPath(segments:string[]){if(segments[0]==='genre'&&segments[1])return genres.find((g)=>g.slug===segments[1]);return getEntityByPath(segments);}
+export function getProfileEntityByPath(segments:string[]){if(segments[0]==='genre'&&segments[1])return genres.find((g)=>g.slug===segments[1])??importedGenreList().find((g)=>g.slug===segments[1]);return getEntityByPath(segments);}
 export function subtitleForEntity(entity:CatalogEntity){if(entity.kind==='artist')return [entity.country,'Artist'].filter(Boolean).join(' · ');if(entity.kind==='genre')return 'Genre';const artist=getArtistForEntity(entity);if(entity.kind==='album')return [artist?.name,entity.year].filter(Boolean).join(' · ');const album=getAlbumForSong(entity);return [artist?.name,album?.name].filter(Boolean).join(' · ');}
 export function searchLocalCatalog(query:string,limit=12):SearchResult[]{const q=normalize(query);if(!q)return[];const entities:CatalogEntity[]=[...artists,...albums,...songs,...genres,...importedArtistList(),...importedAlbumList(),...importedSongList()];return entities.map((entity)=>{const h=[entity.name,...(aliases[entity.id]??[])].map(normalize);const score=h.some((v)=>v===q)?100:h.some((v)=>v.startsWith(q))?70:h.some((v)=>v.includes(q))?40:0;return{entity,score};}).filter((v)=>v.score>0).sort((a,b)=>b.score-a.score||a.entity.name.localeCompare(b.entity.name)).slice(0,limit).map(({entity})=>({entity,subtitle:subtitleForEntity(entity),source:'local'}));}
 export function getEntriesForEntity(entityId:string,data:DemoData=seedDemoData){return data.entries.filter((e)=>e.entityId===entityId&&e.public).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));}
@@ -29,9 +29,9 @@ export function getCreditsForSong(songId:string){return songCredits.filter((c)=>
 export function getFactsForSong(songId:string){return songFacts.filter((f)=>f.songId===songId);}
 export function getGenresForEntity(entityId:string,data:DemoData=seedDemoData){
   const rows=[...entityGenres,...(data.genreAssertions??[])].filter((row)=>row.entityId===entityId);
-  const grouped=new Map<string,{genre:NonNullable<ReturnType<typeof catalog.genres.get>>;source:'catalog'|'community'|'user';votes:number}>();
+  const grouped=new Map<string,{genre:Genre;source:'catalog'|'community'|'user';votes:number}>();
   for(const row of rows){
-    const genre=catalog.genres.get(row.genreId);if(!genre)continue;
+    const genre=catalog.genres.get(row.genreId)??importedCatalog.genres.get(row.genreId);if(!genre)continue;
     const current=grouped.get(row.genreId);
     const source=current?.source==='community'||row.source==='community'?'community':current?.source==='user'||row.source==='user'?'user':'catalog';
     const votes=(current?.votes??0)+(row.source==='user'?1:(row.votes??0));
