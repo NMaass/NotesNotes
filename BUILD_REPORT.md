@@ -1,4 +1,6 @@
-# Resonote MVP build report
+# Resonote MVP build report (historical)
+
+> This report describes the original Next.js web MVP, delivered before the product became an iPhone-only app. The web interface it lists is retired; the data model, D1 schema, API routes, and MusicBrainz adapter it describes live on as the iOS app's backend. Kept for the record; nothing here is a current checklist.
 
 ## Delivered scope
 

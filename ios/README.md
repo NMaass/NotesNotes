@@ -1,10 +1,12 @@
 # Resonote for iPhone
 
-A native SwiftUI version of Resonote, the rating-free music journal. It uses the same
-Cloudflare Worker and D1 backend as the web app. It knows what you're listening to and
-asks whether you want to write about it, from the app, a Home Screen widget, or the
-Action button. For targets, data flow, and interface rules, see
-[ARCHITECTURE.md](ARCHITECTURE.md).
+Resonote, the rating-free music journal, as a native SwiftUI app on the Cloudflare
+Worker and D1 backend in this repository. It is a private journal first: the Now
+tab opens on your own recent listening and your own notes, not on other people's. It
+knows what you've been listening to and asks whether you want to write about a song,
+from the app, a Home Screen widget, or the Action button. For targets, data flow, and
+interface rules, see [ARCHITECTURE.md](ARCHITECTURE.md). For how listening history and
+now-playing are sourced, see [docs/IOS_NOW_PLAYING.md](../docs/IOS_NOW_PLAYING.md).
 
 ## Requirements
 
@@ -56,7 +58,8 @@ Product → Test runs the same ResonoteKit suite.
 
 ## How now-playing works
 
-iOS doesn't let one app read what another app is playing, so Resonote checks several
+iOS doesn't let one app read what another app is playing, so Resonote leads with your
+recent listening history and treats the exact current song as a bonus. It checks several
 sources whenever you open it, run a shortcut, or the widget refreshes:
 
 | Source | Covers | Setup |
@@ -65,6 +68,7 @@ sources whenever you open it, run a shortcut, or the widget refreshes:
 | Last.fm / ListenBrainz | Spotify, and anything else that scrobbles | In Resonote's Settings, enter your username. The backend reads your public now-playing. |
 | Identify | Anything audible | Tap Identify. Shazam listens for a few seconds. The first use asks for the microphone. |
 | Links | Spotify, Apple Music, YouTube Music | Share a song to Resonote from the share sheet, or copy a link and open the app. |
+| Recently played | Any app that shows on the Lock Screen's Now Playing (iOS 18 and later) | Tap Recently played in the capture sheet; the system Journaling Suggestions picker lists recent songs and you pick one. No account, no microphone. |
 
 - **Spotify:** connect Spotify to Last.fm (last.fm → Settings → Applications) or to
   ListenBrainz (listenbrainz.org → Settings → Connect services). Then add that

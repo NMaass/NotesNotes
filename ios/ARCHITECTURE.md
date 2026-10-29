@@ -1,7 +1,7 @@
 # Resonote for iPhone — architecture
 
-A native SwiftUI rebuild of the Resonote web app (rating-free music journal), on the
-same Cloudflare Worker + D1 backend. Minimum iOS 26.0, Swift 6, default actor
+The Resonote app (rating-free music journal), native SwiftUI on the Cloudflare Worker +
+D1 backend in `src/app/api`. It is the product's only client. Minimum iOS 26.0, Swift 6, default actor
 isolation `MainActor` with Approachable Concurrency, iPhone only, dark appearance.
 
 ## Targets
@@ -92,7 +92,7 @@ MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, pr
 - Other people's writing can be reported and its writer blocked (`Features/Safety`);
   blocked people's writing is hidden everywhere. Settings deletes the account.
 
-## Stable-interface rules (from the web app; non-negotiable)
+## Stable-interface rules (non-negotiable)
 
 1. Declare geometry before content arrives: fixed artwork frames (`ArtworkView`),
    reserved error rows (`ReservedErrorRow`), placeholder rows of final height.
@@ -127,8 +127,7 @@ Shared building blocks (in `Resonote/DesignSystem/` and `Shared/Palette.swift`):
   `@Environment(NowPlayingService.self)`.
 - Load with `.task(id:)` so changing inputs cancels stale work. Keep view bodies cheap:
   no formatters or JSON work in `body`; precompute.
-- Copy: keep the web app's microcopy where it exists (see docs/IOS_API.md and the web
-  components). Sentence case. No exclamation marks.
+- Copy: sentence case, no exclamation marks; error strings match docs/IOS_API.md.
 - Accessibility: every icon-only button has a label; Dynamic Type works (Georgia uses
   `relativeTo:`); VoiceOver reads cards as one element with actions.
 - Verify with `ios/scripts/typecheck.sh [kit|app|widgets|share|all]` (Mac Catalyst

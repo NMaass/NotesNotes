@@ -1,7 +1,7 @@
 # Native client API contract
 
-The iOS app talks to the same Cloudflare Worker + D1 backend as the web app. This
-document is the contract between `src/app/api/**` and
+The iOS app is the backend's only client (the web interface is retired; its cookie
+session path remains in the routes but nothing uses it). This document is the contract between `src/app/api/**` and
 `ios/Packages/ResonoteKit/Sources/ResonoteKit/Networking/` — change both together.
 
 All bodies are JSON. Errors keep the existing shape `{ ok: false, error: string }`

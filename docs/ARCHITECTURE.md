@@ -1,5 +1,7 @@
 # Resonote architecture
 
+> Resonote is an iPhone app on a Cloudflare Worker + D1 backend. This document covers the data model and the backend. The client-side sections that remain (journal document format, stable-interface contracts) describe behaviour the iOS app carries forward; where a passage names the retired web interface (Tiptap, Zustand, localStorage, iframe players), read it as the origin of a format or rule, not as a running surface. The app itself is described in `ios/ARCHITECTURE.md`.
+
 ## Product boundary
 
 A catalog provider can establish that a recording exists. It cannot establish what that recording meant to a listener.
@@ -24,7 +26,7 @@ The demo catalog uses stable UUID-shaped identifiers. External MusicBrainz IDs a
 
 ## Journal document and music references
 
-Tiptap stores the prose as JSON. A music reference is a structured inline node:
+Prose is stored as Tiptap-compatible JSON (the iOS app's `ResonoteKit` rich-text codec reads and writes the same document). A music reference is a structured inline node:
 
 ```json
 {
@@ -71,11 +73,9 @@ Remote results are not inserted automatically. A future transactional import wor
 
 ## Authentication and privacy
 
-Demo mode uses code `000000` with browser persistence.
+Sign-in is a six-digit email OTP. The iOS app receives a bearer token (rows in `sessions`, 30-day expiry); see `docs/IOS_API.md`. The cookie session exists only for the retired web client. `requireAuth(intent)` preserves the exact user action. A person who starts writing about a song returns to that draft rather than being diverted into onboarding.
 
-Cloud mode uses six-digit email OTP with a server-side session cookie. The iOS app signs in with the same OTP and receives a bearer token instead (same `sessions` table, same expiry); see `docs/IOS_API.md`. `requireAuth(intent)` preserves the exact user action. A person who starts writing about a song returns to that draft rather than being diverted into onboarding.
-
-Public profile bundles expose likes, public entries, public collections, pins, and attributed genre assertions. Listen logs are loaded only for the signed-in owner. Private editor drafts never leave the device until publication.
+Private first. Entries, collections, listens, and likes belong to their owner and are loaded only for the signed-in owner. A profile page shows only what that person chose to publish: published entries and collections, pins, and attributed genre assertions. There is no follow graph and no notification of other people's activity; a cross-person feed, where it exists, is a reading surface of published entries, not the home screen. Private editor drafts never leave the device until publication. (The native-client API in `docs/IOS_API.md` still describes likes in public bundles; bringing it in line is tracked work.)
 
 ## User genre assertions
 
@@ -103,24 +103,10 @@ Song facts include source and confidence:
 
 The UI does not present an estimated key, tempo, or meter as unquestioned ground truth.
 
-## Data modes
+## Data mode
 
-`NEXT_PUBLIC_DATA_MODE=demo`:
-
-- seed catalog and user data are cloned into Zustand;
-- mutations persist to `resonote-demo-v1` in localStorage;
-- OTP is simulated with `000000`.
-
-`NEXT_PUBLIC_DATA_MODE=cloud`:
-
-- the same client interaction model is retained;
-- accounts, sessions, and imports live in Cloudflare D1;
-- authenticated/private and public profile bundles load through `/api` routes that authorize against the session cookie;
-- optimistic writes update local perception immediately;
-- per-object queues serialize server synchronization.
-
-The modes use distinct storage keys so demo data does not leak into a cloud account.
+The backend runs in cloud mode only (`NEXT_PUBLIC_DATA_MODE=cloud`): accounts, sessions, and imports live in Cloudflare D1, and private and public bundles load through `/api` routes that authorize against a bearer token (the session cookie path remains for the retired web client). On the phone, optimistic writes update the interface immediately and a durable per-object outbox serializes synchronization; see `ios/ARCHITECTURE.md`. The browser-local demo mode of the web MVP no longer exists.
 
 ## Deployment
 
-OpenNext builds the App Router application for Cloudflare Workers with `nodejs_compat`. D1 is the managed datastore; authorization lives in the route handlers rather than SQL policies. MusicBrainz is called only from a route handler. Spotify and YouTube audio/video remain in provider-owned iframes.
+OpenNext builds the API routes for Cloudflare Workers with `nodejs_compat`. D1 is the managed datastore; authorization lives in the route handlers rather than SQL policies. MusicBrainz, Last.fm, ListenBrainz, and link providers are called only from route handlers, never from the phone.
