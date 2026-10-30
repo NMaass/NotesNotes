@@ -15,10 +15,27 @@ public struct Draft: Codable, Sendable, Hashable {
     public var lenses: [MusicLens]
     public var worked: String
     public var didntWork: String
+    /// Whether the entry will be published when saved. Private unless the person says so.
     public var isPublic: Bool
     public var updatedAt: Date
+    /// Set on a note written before anyone named its song (write first, attach later).
+    /// It stays the draft's key whatever song attaches, so the person can change it.
+    public var noteId: String?
+    /// When the person began a written-first note. The listen covering this moment is
+    /// the song it attaches to (`WriteFirst`), and the entry keeps it as its date.
+    public var writtenAt: Date?
+    /// How a written-first note's `track` got there. Nil while it waits for a song.
+    public var attachment: Attachment?
 
-    public init(entityId: String, entityKind: EntityKind, entryId: String? = nil, track: NowPlayingTrack? = nil, title: String = "", document: RichDocument = .empty, lenses: [MusicLens] = [], worked: String = "", didntWork: String = "", isPublic: Bool = true, updatedAt: Date = Date()) {
+    /// Who attached a written-first note's song.
+    public enum Attachment: String, Codable, Sendable, Hashable {
+        /// A recent play covering `writtenAt` attached itself; a better one may replace it.
+        case automatic
+        /// The person chose the song, or detached it (no `track`): never overridden.
+        case person
+    }
+
+    public init(entityId: String, entityKind: EntityKind, entryId: String? = nil, track: NowPlayingTrack? = nil, title: String = "", document: RichDocument = .empty, lenses: [MusicLens] = [], worked: String = "", didntWork: String = "", isPublic: Bool = false, updatedAt: Date = Date(), noteId: String? = nil, writtenAt: Date? = nil, attachment: Attachment? = nil) {
         self.entityId = entityId
         self.entityKind = entityKind
         self.entryId = entryId
@@ -30,22 +47,36 @@ public struct Draft: Codable, Sendable, Hashable {
         self.didntWork = didntWork
         self.isPublic = isPublic
         self.updatedAt = updatedAt
+        self.noteId = noteId
+        self.writtenAt = writtenAt
+        self.attachment = attachment
     }
 
-    /// One draft per entity for new entries, one per entry when editing, and one per
-    /// unmatched track.
+    /// One draft per entity for new entries, one per entry when editing, one per
+    /// unmatched track, and one per written-first note.
     public var key: String {
+        if let noteId, entryId == nil { return Self.noteKey(noteId) }
         if entityId.isEmpty, entryId == nil, let track { return Self.key(for: track) }
         return Self.key(kind: entityKind, entityId: entityId, entryId: entryId)
     }
 
     /// Whether the draft is about a track that isn't matched to a catalog song yet.
-    public var isUnmatched: Bool { entityId.isEmpty && track != nil }
+    /// A written-first note is its own kind, whatever is attached.
+    public var isUnmatched: Bool { entityId.isEmpty && track != nil && !isWrittenFirst }
+
+    /// A note saved before its song was known.
+    public var isWrittenFirst: Bool { noteId != nil && entryId == nil }
+
+    /// A written-first note with no song attached yet.
+    public var isWaitingForSong: Bool { isWrittenFirst && track == nil }
 
     public static func key(kind: EntityKind, entityId: String, entryId: String?) -> String {
         if let entryId { return "entry-\(entryId)" }
         return "\(kind.rawValue)-\(entityId)"
     }
+
+    /// The key for a written-first note.
+    public static func noteKey(_ noteId: String) -> String { "note-\(noteId)" }
 
     /// The key for words about a track that isn't matched yet.
     public static func key(for track: NowPlayingTrack) -> String {
@@ -137,9 +168,13 @@ public struct DraftStore: Sendable {
 
     /// Moves words kept for an unmatched `track` onto the draft for `songId`, adding them
     /// after anything already there. Never replaces a draft; a private choice stays private.
+    ///
+    /// Written-first notes attached to `track` stay notes of their own (the person can
+    /// still change their song); they learn the catalog song instead.
     @discardableResult
     public func attachUnmatched(_ track: NowPlayingTrack, toSong songId: String) -> Bool {
-        guard let kept = unmatched(for: track) else { return false }
+        let matchedNotes = matchNotes(on: track, toSong: songId)
+        guard let kept = unmatched(for: track) else { return matchedNotes }
         let key = Draft.key(kind: .song, entityId: songId, entryId: nil)
         var draft = load(key: key) ?? Draft(entityId: songId, entityKind: .song, document: RichDocument(content: []), lenses: [], isPublic: kept.isPublic)
         let existing = draft.document.isBlank ? [] : draft.document.content
@@ -155,6 +190,92 @@ public struct DraftStore: Sendable {
         save(draft)
         delete(key: Draft.key(for: track))
         return true
+    }
+
+    // MARK: Write first, attach later
+
+    /// Saves a note written with no song yet (or with one the person chose while writing).
+    /// It keeps `writtenAt`, and a listen covering that moment attaches later.
+    @discardableResult
+    public func saveNote(_ text: String, lenses: [MusicLens], isPublic: Bool, writtenAt: Date, noteId: String = UUID().uuidString, track: NowPlayingTrack? = nil, attachment: Draft.Attachment? = nil) -> Draft? {
+        let words = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !words.isEmpty else { return nil }
+        var draft = load(key: Draft.noteKey(noteId)) ?? Draft(entityId: "", entityKind: .song, isPublic: isPublic, noteId: noteId, writtenAt: writtenAt)
+        draft.document = RichDocument.plain(words)
+        draft.lenses = lenses
+        draft.isPublic = isPublic
+        if let track {
+            if draft.track.map(Draft.key(for:)) != Draft.key(for: track) { draft.entityId = "" }
+            draft.track = track
+            draft.attachment = attachment ?? .person
+        } else if attachment == .person {
+            draft.track = nil
+            draft.entityId = ""
+            draft.attachment = .person
+        }
+        draft.updatedAt = Date()
+        save(draft)
+        return draft
+    }
+
+    /// Every written-first note, newest first. Reads only the note files.
+    public func notes() -> [Draft] {
+        let folders = owner == nil ? [root] : [directory, root]
+        var seen = Set<String>()
+        var found: [Draft] = []
+        for folder in folders {
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? []
+            for file in files where file.pathExtension == "json" && file.lastPathComponent.hasPrefix("note-") {
+                guard let data = try? Data(contentsOf: file),
+                      let draft = try? JSONDecoder().decode(Draft.self, from: data),
+                      draft.isWrittenFirst, seen.insert(draft.key).inserted else { continue }
+                found.append(draft)
+            }
+        }
+        return found.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    /// Attaches the listen covering each waiting note's time (`WriteFirst.automaticPlay`).
+    /// A song the person chose, or a detach, is never overridden. Returns the notes changed.
+    @discardableResult
+    public func attachCoveringPlays(_ plays: [RecentPlay]) -> [Draft] {
+        guard !plays.isEmpty else { return [] }
+        var changed: [Draft] = []
+        for var note in notes() {
+            guard let play = WriteFirst.automaticPlay(for: note, in: plays) else { continue }
+            note.track = play.track(now: play.playedAt ?? Date())
+            note.entityId = ""
+            note.attachment = .automatic
+            note.updatedAt = Date()
+            save(note)
+            changed.append(note)
+        }
+        return changed
+    }
+
+    /// The person chose `track` for a written-first note, or detached its song (nil).
+    /// Either way the choice is theirs and nothing attaches over it.
+    @discardableResult
+    public func setNoteTrack(_ track: NowPlayingTrack?, forKey key: String) -> Draft? {
+        guard var note = load(key: key), note.isWrittenFirst else { return nil }
+        note.track = track
+        note.entityId = ""
+        note.attachment = .person
+        note.updatedAt = Date()
+        save(note)
+        return note
+    }
+
+    /// Written-first notes attached to `track` learn its catalog song.
+    private func matchNotes(on track: NowPlayingTrack, toSong songId: String) -> Bool {
+        let key = Draft.key(for: track)
+        var changed = false
+        for var note in notes() where note.track.map(Draft.key(for:)) == key && note.entityId != songId {
+            note.entityId = songId
+            save(note)
+            changed = true
+        }
+        return changed
     }
 
     /// Removes the draft for `key`: this person's and any unowned copy, so it can't come back.

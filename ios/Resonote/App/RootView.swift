@@ -100,6 +100,8 @@ extension View {
                 CollectionView(handle: handle, collectionId: id)
             case .entry(let id):
                 EntryDetailView(entryId: id)
+            case .feed:
+                FeedView()
             case .settings:
                 SettingsView()
             }

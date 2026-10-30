@@ -109,7 +109,8 @@ final class ComposerSession {
         var lenses: [MusicLens] = []
         var worked = ""
         var didntWork = ""
-        var isPublic = true
+        /// Private first: a new entry is only the writer's until they choose to publish.
+        var isPublic = false
         var flattensStructure = false
         var fromDraft = false
         var needsSave = false

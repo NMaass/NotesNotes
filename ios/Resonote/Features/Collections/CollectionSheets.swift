@@ -12,11 +12,13 @@ struct NewCollectionSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""
     @State private var description = ""
+    /// Private first: a new collection is only the owner's until they publish it.
+    @State private var isPublic = false
     @State private var confirmDiscard = false
     @FocusState private var nameFocused: Bool
 
     private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
-    private var isDirty: Bool { !trimmedName.isEmpty || !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private var isDirty: Bool { !trimmedName.isEmpty || !description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isPublic }
 
     var body: some View {
         NavigationStack {
@@ -41,6 +43,8 @@ struct NewCollectionSheet: View {
                     Text("What holds it together?")
                 }
                 .listRowBackground(RN.Palette.paper2)
+
+                CollectionVisibilitySection(isPublic: $isPublic)
             }
             .journalFormStyle()
             .navigationTitle("Make a collection")
@@ -69,8 +73,8 @@ struct NewCollectionSheet: View {
 
     private func create() {
         guard !trimmedName.isEmpty,
-              let collection = model.createCollection(name: trimmedName, description: description.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
-        AccessibilityNotification.Announcement("Collection created").post()
+              let collection = model.createCollection(name: trimmedName, description: description.trimmingCharacters(in: .whitespacesAndNewlines), isPublic: isPublic) else { return }
+        AccessibilityNotification.Announcement(isPublic ? "Collection created and published" : "Collection created").post()
         dismiss()
         if let onCreated {
             onCreated(collection)
@@ -120,12 +124,7 @@ struct EditCollectionSheet: View {
                 }
                 .listRowBackground(RN.Palette.paper2)
 
-                Section {
-                    Toggle("Public", isOn: $isPublic)
-                } footer: {
-                    Text(isPublic ? "Anyone who visits your profile can see it." : "Only you can see it.")
-                }
-                .listRowBackground(RN.Palette.paper2)
+                CollectionVisibilitySection(isPublic: $isPublic)
             }
             .journalFormStyle()
             .navigationTitle("Edit collection")
@@ -161,6 +160,29 @@ struct EditCollectionSheet: View {
         latest.isPublic = isPublic
         model.updateCollection(latest)
         dismiss()
+    }
+}
+
+/// Publish, off by default, with a footer that keeps its height as the switch flips.
+private struct CollectionVisibilitySection: View {
+    @Binding var isPublic: Bool
+
+    var body: some View {
+        Section {
+            Toggle(VisibilityCopy.publicLabel, isOn: $isPublic)
+                .sensoryFeedback(.selection, trigger: isPublic)
+        } footer: {
+            ZStack(alignment: .topLeading) {
+                ForEach([true, false], id: \.self) { option in
+                    Text(VisibilityCopy.collectionNote(isPublic: option))
+                        .opacity(option == isPublic ? 1 : 0)
+                        .accessibilityHidden(option != isPublic)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .listRowBackground(RN.Palette.paper2)
     }
 }
 

@@ -41,7 +41,8 @@ struct ProfileDigest {
         listenCount = input.isOwner ? bundle.listens.count : 0
         let visible = input.isOwner ? bundle.collections : bundle.collections.filter(\.isPublic)
         collections = Self.oldestFirst(visible)
-        likedCount = Set(bundle.likes.filter { $0.entityKind != .genre }.map(\.entityId)).count
+        // Likes are the owner's alone; a public bundle carries none, and none are counted.
+        likedCount = input.isOwner ? Set(bundle.likes.filter { $0.entityKind != .genre }.map(\.entityId)).count : 0
     }
 
     /// Collections in the order they were made, as the server lists them; ties keep bundle order.
@@ -103,10 +104,13 @@ struct ProfileContent: View {
     private func counts(_ digest: ProfileDigest) -> [ProfileSection: Int] {
         var counts: [ProfileSection: Int] = [
             .journal: digest.entries.count,
-            .library: digest.likedCount,
             .collections: digest.collections.count,
         ]
-        if isOwner { counts[.listens] = digest.listenCount }
+        // Listens and likes are private: someone else's profile shows a lock in their place.
+        if isOwner {
+            counts[.listens] = digest.listenCount
+            counts[.library] = digest.likedCount
+        }
         return counts
     }
 
@@ -114,11 +118,13 @@ struct ProfileContent: View {
 
     @ViewBuilder
     private func journal(_ entries: [JournalEntry]) -> some View {
-        SectionHeader(eyebrow: isOwner ? "Your writing" : "Public writing", title: "Journal")
+        SectionHeader(eyebrow: isOwner ? "Your writing" : "Published writing", title: "Journal")
         if entries.isEmpty {
             EmptyStateView(
-                title: "Nothing published yet",
-                message: "Thoughts will appear here without being reduced to scores."
+                title: isOwner ? "Nothing written yet" : "Nothing published yet",
+                message: isOwner
+                    ? "Everything you write starts private. Publish an entry when you want others to read it."
+                    : "Thoughts will appear here without being reduced to scores."
             )
         } else {
             ForEach(entries) { entry in
@@ -142,7 +148,7 @@ struct ProfileContent: View {
         if !isOwner {
             EmptyStateView(
                 title: "Listening history is private",
-                message: "Journal entries and liked music remain available on this profile."
+                message: "Published journal entries and collections remain available on this profile."
             )
         } else if digest.listenDays.isEmpty {
             EmptyStateView(
@@ -167,8 +173,15 @@ struct ProfileContent: View {
 
     @ViewBuilder
     private var library: some View {
-        SectionHeader(eyebrow: "Affirmative taste", title: "Liked music")
-        ProfileLibraryView(bundle: bundle, isOwner: isOwner, unavailable: unavailable)
+        SectionHeader(eyebrow: isOwner ? "Affirmative taste, only for you" : "Affirmative taste", title: "Liked music")
+        if isOwner {
+            ProfileLibraryView(bundle: bundle, isOwner: isOwner, unavailable: unavailable)
+        } else {
+            EmptyStateView(
+                title: "Liked music is private",
+                message: "Likes stay with the person who made them. Their published writing is under Journal."
+            )
+        }
     }
 
     // MARK: Collections

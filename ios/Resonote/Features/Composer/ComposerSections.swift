@@ -66,7 +66,7 @@ struct ComposerDraftNotice: View {
                 Button("Keep writing", role: .cancel) {}
             } message: {
                 Text(session.isEditingPublishedEntry
-                     ? "The published entry stays as it is."
+                     ? "The saved entry stays as it is."
                      : "What you wrote here will be gone.")
             }
         }
@@ -287,7 +287,7 @@ struct ComposerReflections: View {
     }
 }
 
-/// Public / Only me.
+/// Only me / Published. Private comes first and is where every new entry starts.
 struct ComposerVisibility: View {
     @Bindable var session: ComposerSession
 
@@ -295,10 +295,11 @@ struct ComposerVisibility: View {
         VStack(alignment: .leading, spacing: RN.Space.s) {
             ComposerSectionTitle(title: "Who can read this", note: nil)
             Picker("Who can read this", selection: $session.isPublic) {
-                Text(VisibilityCopy.publicLabel).tag(true)
                 Text(VisibilityCopy.privateLabel).tag(false)
+                Text(VisibilityCopy.publishedLabel).tag(true)
             }
             .pickerStyle(.segmented)
+            .sensoryFeedback(.selection, trigger: session.isPublic)
             // Both explanations share one cell so the section never changes height.
             VisibilityNote(isPublic: session.isPublic)
                 .font(.footnote)

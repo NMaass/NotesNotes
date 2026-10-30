@@ -7,7 +7,9 @@ import UIKit
 /// writing with `\` music references, lenses, reflections, and visibility.
 ///
 /// Drafts are kept on this device the whole time: Cancel, swiping the sheet away, or
-/// leaving the app never loses writing. Publishing is the only thing that clears a draft.
+/// leaving the app never loses writing. Saving is the only thing that clears a draft.
+/// Saving keeps the entry private unless the person chose Published; the confirm button
+/// says which ("Save" or "Publish"), so nothing goes public by surprise.
 struct ComposerView: View {
     let context: ComposerContext
 
@@ -74,7 +76,7 @@ private struct ComposerForm: View {
                     ComposerLensSection(session: session)
                     ComposerReflections(session: session, focus: $focus)
                     ComposerVisibility(session: session)
-                    Text("Drafts stay on this device until you publish.")
+                    Text("Drafts stay on this device until you save.")
                         .font(.footnote)
                         .foregroundStyle(RN.Palette.muted)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -119,8 +121,13 @@ private struct ComposerForm: View {
             }
         }
         ToolbarItem(placement: .confirmationAction) {
-            Button("Publish") { publish(proxy: proxy) }
-                .buttonStyle(.glassProminent)
+            Button {
+                publish(proxy: proxy)
+            } label: {
+                StableLabel(session.isPublic ? VisibilityCopy.publicLabel : "Save", among: ["Save", VisibilityCopy.publicLabel])
+            }
+            .buttonStyle(.glassProminent)
+            .accessibilityLabel(session.isPublic ? "Publish entry" : "Save privately")
         }
         ToolbarItemGroup(placement: .keyboard) {
             if focus == .body {
@@ -169,7 +176,7 @@ private struct ComposerForm: View {
             session.releaseDraftAfterPublishing()
         }
         UINotificationFeedbackGenerator().notificationOccurred(.success)
-        AccessibilityNotification.Announcement("Journal entry saved").post()
+        AccessibilityNotification.Announcement(entry.isPublic ? "Journal entry published" : "Journal entry saved privately").post()
         dismiss()
     }
 

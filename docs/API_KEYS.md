@@ -22,7 +22,7 @@ Local development uses the same binding through miniflare; `npm run dev` applies
 npx wrangler d1 execute resonote --local --file=d1/schema.sql
 ```
 
-Apply `d1/migrations/*.sql` in order after the schema; they are additive and idempotent.
+Apply `d1/migrations/*.sql` in order after the schema; they are idempotent. `0005_private_first.sql` makes existing entries and collections private once (guarded by a row in `migration_markers`) and creates `linked_accounts`, which holds Last.fm session keys.
 
 ## Sign-in email — Resend
 
@@ -58,13 +58,21 @@ Album images use MusicBrainz release-group IDs. The app declares a square artwor
 
 ## Last.fm — recent listening and now-playing
 
-`GET /api/now-playing?lastfm=<username>` reads a person's current scrobble and recent tracks with Last.fm's `user.getRecentTracks`. That method needs an API key (no user authorization — it reads public listening data):
+`GET /api/now-playing?lastfm=<username>` (or the person's linked account) reads their current scrobble and up to 10 recent tracks with Last.fm's `user.getRecentTracks`. That method needs an API key (no user authorization — it reads public listening data):
 
 ```dotenv
 LASTFM_API_KEY=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 ```
 
 Create one at https://www.last.fm/api/account/create. In production set it as a Worker secret (`npx wrangler secret put LASTFM_API_KEY`); locally put it in `.env.local`. Without it, the Last.fm lookup is skipped (`services: [{ service: 'lastfm', status: 'not-configured' }]`) and ListenBrainz still works. ListenBrainz needs no key. Last.fm's API terms are non-commercial.
+
+Signing in with Last.fm (web auth, `docs/IOS_API.md` → Linked accounts) also needs the application's shared secret, which signs `auth.getSession`:
+
+```dotenv
+LASTFM_SHARED_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+It is shown next to the API key on https://www.last.fm/api/accounts. Set it the same way (`npx wrangler secret put LASTFM_SHARED_SECRET`). Without it (or without `LASTFM_API_KEY`), `GET /api/account/lastfm` reports `configured: false` and the app falls back to a typed username. Last.fm redirects back to `resonote://lastfm-auth`; no callback URL needs registering, because the server passes it as `cb`.
 
 ## Spotify — no key
 

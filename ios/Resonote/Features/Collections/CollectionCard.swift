@@ -2,7 +2,8 @@ import ResonoteKit
 import SwiftUI
 
 /// A collection on a profile: a small fanned stack of its first covers, its name,
-/// what holds it together, and how many pieces it holds.
+/// what holds it together, and how many pieces it holds. On the owner's own profile it
+/// also says whether the collection is published.
 struct CollectionCard: View {
     let collection: MusicCollection
     var showsPrivacy = false
@@ -13,15 +14,14 @@ struct CollectionCard: View {
     var body: some View {
         let items = collection.items.sorted { $0.position < $1.position }
         let count = JournalCopy.count(items.count, "item")
-        let isPrivate = showsPrivacy && !collection.isPublic
         Button(action: onOpen) {
             HStack(alignment: .center, spacing: RN.Space.l) {
                 CollectionArtStack(items: Array(items.prefix(4)), fallbackTitle: collection.name)
                 VStack(alignment: .leading, spacing: RN.Space.xs) {
                     HStack(spacing: 6) {
                         Eyebrow("Collection")
-                        if isPrivate {
-                            Image(systemName: "lock")
+                        if showsPrivacy {
+                            VisibilityMarker(isPublic: collection.isPublic)
                                 .font(.caption2)
                                 .foregroundStyle(RN.Palette.muted)
                         }
@@ -54,7 +54,7 @@ struct CollectionCard: View {
         }
         .buttonStyle(.plain)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel([collection.name, "collection", count, isPrivate ? "private" : nil].compactMap { $0 }.joined(separator: ", "))
+        .accessibilityLabel([collection.name, "collection", count, showsPrivacy ? VisibilityCopy.marker(isPublic: collection.isPublic) : nil].compactMap { $0 }.joined(separator: ", "))
         .accessibilityHint(collection.description)
         .accessibilityAddTraits(.isButton)
     }

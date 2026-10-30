@@ -67,6 +67,31 @@ public struct APIClient: Sendable {
         let _: OKResponse = try await send("DELETE", "/api/account")
     }
 
+    // MARK: Linked accounts
+
+    /// new: whether Last.fm web auth is available here, and the linked account if any.
+    public func lastfmAccount() async throws -> LastfmAccountResponse {
+        try await send("GET", "/api/account/lastfm")
+    }
+
+    /// new: the Last.fm page that asks the person to approve Resonote. It redirects to
+    /// `resonote://lastfm-auth?token=…`; pass that token to `linkLastfm(token:)`.
+    public func lastfmAuthURL() async throws -> LastfmAuthURLResponse {
+        try await send("GET", "/api/account/lastfm/auth-url")
+    }
+
+    /// new: exchanges a web-auth token for a Last.fm session the server keeps. A token
+    /// works once; a refused one (400) needs a new approval, not a retry.
+    public func linkLastfm(token: String) async throws -> LastfmAccount {
+        let response: LastfmLinkResponse = try await send("POST", "/api/account/lastfm/session", body: ["token": token])
+        return response.account
+    }
+
+    /// new: forgets the linked Last.fm account and its session. Idempotent.
+    public func unlinkLastfm() async throws {
+        let _: OKResponse = try await send("DELETE", "/api/account/lastfm")
+    }
+
     // MARK: Safety
 
     /// new: tells Resonote that an entry or a profile breaks the rules.
@@ -152,12 +177,16 @@ public struct APIClient: Sendable {
         try await send("POST", "/api/music/resolve", body: request)
     }
 
-    /// new: the freshest track across linked Last.fm and ListenBrainz accounts.
-    public func remoteNowPlaying(lastfm: String?, listenbrainz: String?, resolve: Bool) async throws -> RemoteNowPlayingResponse {
+    /// new: the freshest track and the recent plays across linked Last.fm and
+    /// ListenBrainz accounts. A Last.fm account linked through web auth is used even
+    /// when `lastfm` is nil.
+    /// With `before`, `recent` is the history before that moment and `track` is nil.
+    public func remoteNowPlaying(lastfm: String?, listenbrainz: String?, resolve: Bool, before: Date? = nil) async throws -> RemoteNowPlayingResponse {
         var query: [String: String] = [:]
         if let lastfm, !lastfm.isEmpty { query["lastfm"] = lastfm }
         if let listenbrainz, !listenbrainz.isEmpty { query["listenbrainz"] = listenbrainz }
         if resolve { query["resolve"] = "1" }
+        if let before { query["before"] = ResonoteDate.string(from: before) }
         return try await send("GET", "/api/now-playing", query: query)
     }
 

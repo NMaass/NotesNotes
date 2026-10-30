@@ -8,9 +8,9 @@ Do these in order. The iPhone app needs the backend, so the backend comes first.
 - [ ] Run `npx wrangler login` once.
 - [ ] Create the database if this is a fresh account: `npx wrangler d1 create resonote`, then put the binding in `wrangler.jsonc` (already done for this repository).
 - [ ] Apply the schema remotely: `npx wrangler d1 execute resonote --remote --file=d1/schema.sql`.
-- [ ] Apply every file in `d1/migrations/` in order the same way (they are additive and idempotent).
+- [ ] Apply every file in `d1/migrations/` in order the same way (they are idempotent). `0005_private_first.sql` makes existing entries and collections private once and adds `linked_accounts` for Last.fm sign-in; expect an empty feed until people publish again.
 - [ ] Set production variables in Cloudflare: `NEXT_PUBLIC_SITE_URL` (the Worker's https URL), `MUSICBRAINZ_CONTACT_EMAIL`, `NEXT_PUBLIC_ENABLE_REMOTE_SEARCH=true`, `NEXT_PUBLIC_DATA_MODE=cloud`.
-- [ ] Set secrets: `npx wrangler secret put LASTFM_API_KEY` (see `docs/API_KEYS.md`); `RESEND_API_KEY` and `AUTH_EMAIL_FROM` before inviting anyone, otherwise sign-in codes are returned in the API response.
+- [ ] Set secrets: `npx wrangler secret put LASTFM_API_KEY` and `npx wrangler secret put LASTFM_SHARED_SECRET` (Sign in with Last.fm; see `docs/API_KEYS.md`); `RESEND_API_KEY` and `AUTH_EMAIL_FROM` before inviting anyone, otherwise sign-in codes are returned in the API response.
 - [ ] Deploy: `npm run cf:deploy`. Note the Worker URL.
 - [ ] Check it: `curl https://YOUR-WORKER/api/auth/session` answers `{"authenticated":false}`.
 
@@ -25,11 +25,14 @@ Do these in order. The iPhone app needs the backend, so the backend comes first.
 
 - [ ] Xcode 26 or newer; an Apple Developer account.
 - [ ] Put your team ID in `ios/Config/Signing.xcconfig`.
-- [ ] In the developer portal, turn on **ShazamKit** for the app's App ID (Identify needs it) and add the **Journaling Suggestions** capability in Xcode (the Recently played picker needs it).
+- [ ] In the developer portal, turn on **ShazamKit** for the app's App ID (Identify needs it). The **Journaling Suggestions** entitlement (the capture sheet's Journal suggestions picker) is already in `ios/project.yml`; automatic signing adds it.
 - [ ] Run the **Resonote** scheme on a real iPhone.
 - [ ] Sign in with an email; enter the code from your inbox (or from the dev-server log when running locally).
 - [ ] Play something in the Music app, open Resonote, and confirm the Now tab names it.
-- [ ] In Settings, add a Last.fm or ListenBrainz username; play something on Spotify and confirm it appears.
+- [ ] In Settings, tap **Sign in with Last.fm** (or add a ListenBrainz username); play something on Spotify and confirm it appears, and that the capture sheet lists recent plays newest first.
+- [ ] With nothing playing, choose "Write first, add the song later", save a note, play a song, and confirm the note in Drafts shows it attached automatically.
+- [ ] Write an entry and confirm it starts as "Only me"; publish it and confirm it appears in the feed ("Published by others" on the Now tab).
+- [ ] Build the Shazam → Note a Song shortcut (`ios/README.md`) and run it from the Action button.
 - [ ] Tap Identify with music playing nearby; confirm the microphone prompt and a match.
 - [ ] Share a Spotify or YouTube Music link to Resonote from the share sheet.
 - [ ] Add the widget, assign the **Note Song** Control to the Action button, and check both open the capture sheet.

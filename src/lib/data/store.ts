@@ -283,7 +283,9 @@ export const useResonoteStore = create<ResonoteState>()(
           name: name.trim(),
           slug,
           description: description.trim(),
+          // Sent explicitly: the server stores only `published` (missing = private).
           public: true,
+          published: true,
           items: [],
           createdAt: now,
           updatedAt: now,

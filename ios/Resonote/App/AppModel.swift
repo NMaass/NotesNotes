@@ -65,6 +65,9 @@ final class AppModel {
     @ObservationIgnored private var cacheLoad: Task<Void, Never>?
     /// Bumped by sign-in and sign-out, so a read that started before either is discarded.
     @ObservationIgnored private var sessionGeneration = 0
+    /// Someone signed out, or a different person's session replaced theirs. Set by
+    /// `NowPlayingService`, which forgets the previous person's Last.fm link.
+    @ObservationIgnored var onAccountChange: (() -> Void)?
     /// Local writes by revision, so a refresh can keep objects written while it was in flight.
     @ObservationIgnored private var localRevision = 0
     @ObservationIgnored private var localWrites: [(revision: Int, key: String)] = []
@@ -100,6 +103,9 @@ final class AppModel {
 
     /// The signed-in person's drafts (plus any written while nobody was signed in).
     var drafts: DraftStore { DraftStore.shared.scoped(to: ownerId) }
+    /// Bumped when a written-first note attaches a song on its own, so the Drafts list
+    /// reads again without waiting for the next visit.
+    private(set) var writtenNotesAttached = 0
 
     init() {
         let token = SessionToken()
@@ -305,6 +311,7 @@ final class AppModel {
             await MainActor.run { self.keepWords(from: removed, publishedEntryIds: published, fallbackOwner: owner) }
         }
         publishWidgetFacts()
+        onAccountChange?()
     }
 
     /// A different person's session replaces the one on this device: their bundle wins
@@ -316,6 +323,7 @@ final class AppModel {
         let owner = fresh.profile.id
         resetBlocks(for: owner)
         apply(serverBundle: fresh, unconfirmed: [])
+        onAccountChange?()
         enqueueOnChain { outbox in
             let dropped = await outbox.adopt(owner: owner)
             if !dropped.isEmpty {
@@ -493,6 +501,42 @@ final class AppModel {
         commit(bundle, .entry(entry))
     }
 
+    /// Write first, attach later: each written-first note takes the recent play that
+    /// covers the moment it was begun, unless the person chose or detached its song.
+    /// Drafts stay on the device; the entry is written (through `save`, so the sync
+    /// queue) only when the person saves the note.
+    func attachWrittenNotes(to plays: [RecentPlay]) {
+        guard isSignedIn else { return }
+        if !drafts.attachCoveringPlays(plays).isEmpty { writtenNotesAttached += 1 }
+    }
+
+    /// Saves a written-first note as a journal entry about `songId`, dated when it was
+    /// written. Its draft goes once the write is safely in the sync queue.
+    func saveWrittenNote(_ note: Draft, text: String, songId: String, lenses: [MusicLens], isPublic: Bool) {
+        guard let bundle, note.isWrittenFirst else { return }
+        let document = RichDocument.plain(text)
+        let written = ResonoteDate.string(from: note.writtenAt ?? Date())
+        save(JournalEntry(
+            id: Identifiers.make(),
+            profileId: bundle.profile.id,
+            entityId: songId,
+            entityKind: .song,
+            document: document,
+            plainText: document.plainText,
+            lenses: lenses,
+            references: [],
+            isPublic: isPublic,
+            createdAt: written,
+            updatedAt: ResonoteDate.now()
+        ))
+        let drafts = drafts
+        let key = note.key
+        Task {
+            await writesAreQueued()
+            drafts.delete(key: key)
+        }
+    }
+
     func deleteEntry(id: String) {
         guard var bundle else { return }
         bundle.entries.removeAll { $0.id == id }
@@ -510,7 +554,7 @@ final class AppModel {
     }
 
     @discardableResult
-    func createCollection(name: String, description: String, isPublic: Bool = true) -> MusicCollection? {
+    func createCollection(name: String, description: String, isPublic: Bool = false) -> MusicCollection? {
         guard var bundle else { return nil }
         let now = ResonoteDate.now()
         let slug = Slug.unique(name, taken: Set(bundle.collections.map(\.slug)))
@@ -552,6 +596,34 @@ final class AppModel {
         bundle.collections.removeAll { $0.id == id }
         bundle.pins.removeAll { $0.targetType == .collection && $0.targetId == id }
         commit(bundle, .deleteCollection(id: id))
+    }
+
+    // MARK: Publishing
+
+    /// Publishes or unpublishes one of the owner's entries. The caller passes the end state
+    /// the person chose at tap time (see `toggleLike`), so the last tap wins. It is not an
+    /// edit to the writing, so `updatedAt` (and feed order) stays put. An unpublished edit
+    /// of the entry follows the new choice, so saving that draft later never undoes it.
+    func setPublished(entryId: String, _ published: Bool) {
+        guard var bundle, let index = bundle.entries.firstIndex(where: { $0.id == entryId }) else { return }
+        let current = bundle.entries[index]
+        let key = Draft.key(kind: current.entityKind, entityId: current.entityId, entryId: current.id)
+        if var draft = drafts.load(key: key), draft.isPublic != published {
+            draft.isPublic = published
+            draft.updatedAt = Date()
+            drafts.save(draft)
+        }
+        guard current.isPublic != published else { return }
+        bundle.entries[index].isPublic = published
+        commit(bundle, .entry(bundle.entries[index]))
+    }
+
+    /// Publishes or unpublishes one of the owner's collections, like `setPublished(entryId:_:)`.
+    func setPublished(collectionId: String, _ published: Bool) {
+        guard var bundle, let index = bundle.collections.firstIndex(where: { $0.id == collectionId }),
+              bundle.collections[index].isPublic != published else { return }
+        bundle.collections[index].isPublic = published
+        commit(bundle, .collection(bundle.collections[index]))
     }
 
     /// Pins or unpins, deciding the end state now (see `toggleLike`).

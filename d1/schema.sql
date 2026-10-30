@@ -121,7 +121,7 @@ create table if not exists journal_entries (
   worked text,
   didnt_work text,
   lenses text not null default '[]',
-  is_public integer not null default 1,
+  is_public integer not null default 0,  -- published; private first
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now'))
 );
@@ -157,7 +157,7 @@ create table if not exists collections (
   name text not null,
   slug text not null,
   description text not null default '',
-  is_public integer not null default 1,
+  is_public integer not null default 0,  -- published; private first
   created_at text not null default (datetime('now')),
   updated_at text not null default (datetime('now')),
   unique (profile_id, slug)
@@ -296,3 +296,24 @@ update journal_entries
 update journal_entries
   set created_at = strftime('%Y-%m-%dT%H:%M:%fZ', created_at)
   where created_at <> strftime('%Y-%m-%dT%H:%M:%fZ', created_at);
+
+-- Private first and linked accounts (d1/migrations/0005_private_first.sql). Rows written
+-- before the published flag are unpublished once (a no-op on a new database); the marker
+-- keeps a re-run from unpublishing anything published afterwards.
+create table if not exists migration_markers (
+  name text primary key,
+  applied_at text not null default (datetime('now'))
+);
+update journal_entries set is_public = 0 where not exists (select 1 from migration_markers where name = '0005_private_first');
+update collections set is_public = 0 where not exists (select 1 from migration_markers where name = '0005_private_first');
+insert or ignore into migration_markers (name) values ('0005_private_first');
+
+-- Scrobbling accounts linked through the service's own sign-in. The session key never leaves the server.
+create table if not exists linked_accounts (
+  profile_id text not null references profiles(id) on delete cascade,
+  service text not null check (service in ('lastfm')),
+  username text not null,
+  session_key text not null,
+  linked_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  primary key (profile_id, service)
+);

@@ -92,12 +92,15 @@ public struct JournalEntry: Codable, Sendable, Hashable, Identifiable {
     public var didntWork: String?
     public var lenses: [MusicLens]
     public var references: [MusicReference]
+    /// Whether the entry is published: shown in the feed, on entity pages, and on the
+    /// writer's public profile. On the wire this is `published` (absent means private);
+    /// the legacy `public` key is still read from old servers and still written for them.
     public var isPublic: Bool
     /// ISO-8601 from clients, or SQLite `YYYY-MM-DD HH:MM:SS` for server defaults. Parse with `ResonoteDate`.
     public var createdAt: String
     public var updatedAt: String
 
-    public init(id: String, profileId: String, entityId: String, entityKind: EntityKind, title: String? = nil, document: RichDocument, plainText: String, worked: String? = nil, didntWork: String? = nil, lenses: [MusicLens] = [], references: [MusicReference] = [], isPublic: Bool = true, createdAt: String, updatedAt: String) {
+    public init(id: String, profileId: String, entityId: String, entityKind: EntityKind, title: String? = nil, document: RichDocument, plainText: String, worked: String? = nil, didntWork: String? = nil, lenses: [MusicLens] = [], references: [MusicReference] = [], isPublic: Bool = false, createdAt: String, updatedAt: String) {
         self.id = id
         self.profileId = profileId
         self.entityId = entityId
@@ -114,9 +117,10 @@ public struct JournalEntry: Codable, Sendable, Hashable, Identifiable {
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, PublishedCodingKeys {
         case id, profileId, entityId, entityKind, title, document, plainText, worked, didntWork, lenses, references, updatedAt, createdAt
-        case isPublic = "public"
+        case published
+        case legacyPublic = "public"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -132,9 +136,42 @@ public struct JournalEntry: Codable, Sendable, Hashable, Identifiable {
         didntWork = try c.decodeIfPresent(String.self, forKey: .didntWork)
         lenses = try c.decodeLossyArray(MusicLens.self, forKey: .lenses)
         references = try c.decodeLossyArray(MusicReference.self, forKey: .references)
-        isPublic = try c.decodeIfPresent(Bool.self, forKey: .isPublic) ?? true
+        isPublic = try c.decodePublished()
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(profileId, forKey: .profileId)
+        try c.encode(entityId, forKey: .entityId)
+        try c.encode(entityKind, forKey: .entityKind)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encode(document, forKey: .document)
+        try c.encode(plainText, forKey: .plainText)
+        try c.encodeIfPresent(worked, forKey: .worked)
+        try c.encodeIfPresent(didntWork, forKey: .didntWork)
+        try c.encode(lenses, forKey: .lenses)
+        try c.encode(references, forKey: .references)
+        try c.encode(isPublic, forKey: .published)
+        try c.encode(isPublic, forKey: .legacyPublic)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(updatedAt, forKey: .updatedAt)
+    }
+}
+
+/// Keys shared by entries and collections for the published flag.
+private protocol PublishedCodingKeys: CodingKey {
+    static var published: Self { get }
+    static var legacyPublic: Self { get }
+}
+
+extension KeyedDecodingContainer where Key: PublishedCodingKeys {
+    /// `published`, else the legacy `public` an older server sends, else private.
+    fileprivate func decodePublished() throws -> Bool {
+        if let published = try? decodeIfPresent(Bool.self, forKey: .published) { return published }
+        return (try? decodeIfPresent(Bool.self, forKey: .legacyPublic)) ?? false
     }
 }
 
@@ -196,6 +233,8 @@ public struct MusicCollection: Codable, Sendable, Hashable, Identifiable {
     public var name: String
     public var slug: String
     public var description: String
+    /// Whether the collection is published on the owner's public profile. Same wire
+    /// rules as `JournalEntry.isPublic`: `published`, absent means private.
     public var isPublic: Bool
     public var items: [CollectionItem]
     public var createdAt: String
@@ -213,9 +252,10 @@ public struct MusicCollection: Codable, Sendable, Hashable, Identifiable {
         self.updatedAt = updatedAt
     }
 
-    private enum CodingKeys: String, CodingKey {
+    private enum CodingKeys: String, CodingKey, PublishedCodingKeys {
         case id, profileId, name, slug, description, items, createdAt, updatedAt
-        case isPublic = "public"
+        case published
+        case legacyPublic = "public"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -225,10 +265,24 @@ public struct MusicCollection: Codable, Sendable, Hashable, Identifiable {
         name = try c.decode(String.self, forKey: .name)
         slug = try c.decodeIfPresent(String.self, forKey: .slug) ?? ""
         description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
-        isPublic = try c.decodeIfPresent(Bool.self, forKey: .isPublic) ?? true
+        isPublic = try c.decodePublished()
         items = try c.decodeLossyArray(CollectionItem.self, forKey: .items)
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
         updatedAt = try c.decodeIfPresent(String.self, forKey: .updatedAt) ?? createdAt
+    }
+
+    public func encode(to encoder: any Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(profileId, forKey: .profileId)
+        try c.encode(name, forKey: .name)
+        try c.encode(slug, forKey: .slug)
+        try c.encode(description, forKey: .description)
+        try c.encode(isPublic, forKey: .published)
+        try c.encode(isPublic, forKey: .legacyPublic)
+        try c.encode(items, forKey: .items)
+        try c.encode(createdAt, forKey: .createdAt)
+        try c.encode(updatedAt, forKey: .updatedAt)
     }
 }
 
@@ -284,7 +338,8 @@ public struct Profile: Codable, Sendable, Hashable, Identifiable {
 }
 
 /// A person's data as the server ships it: the signed-in owner's bundle includes
-/// private listens and entries; public bundles never include listens.
+/// likes, listens, and unpublished entries and collections; public bundles carry only
+/// published entries and collections, and empty `likes` and `listens`.
 public struct ProfileBundle: Codable, Sendable, Hashable {
     public var profile: Profile
     public var likes: [Like]

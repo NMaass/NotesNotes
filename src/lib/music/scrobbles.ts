@@ -1,6 +1,7 @@
 // Pure mapping from scrobbling services onto NowPlayingTrack (the shape in
 // ios/.../NowPlaying/NowPlayingTrack.swift). Fetching lives in now-playing.ts.
 import { parseMusicLink } from '@/lib/music/links';
+import { matchKey } from '@/lib/music/text';
 
 export type NowPlayingSource = 'apple-music' | 'spotify' | 'lastfm' | 'listenbrainz' | 'shazam' | 'link' | 'manual';
 export const NOW_PLAYING_SOURCES: NowPlayingSource[] = ['apple-music', 'spotify', 'lastfm', 'listenbrainz', 'shazam', 'link', 'manual'];
@@ -74,14 +75,16 @@ function lastfmImage(images: unknown): string | undefined {
 }
 
 /**
- * `user.getRecentTracks` (format=json). The first track carries
- * `@attr.nowplaying = "true"` while something is playing; finished scrobbles
- * carry `date.uts`. Older API responses return a single track as an object.
+ * `user.getRecentTracks` (format=json) as a list, newest first, with no time
+ * window. The first track carries `@attr.nowplaying = "true"` while something
+ * is playing; finished scrobbles carry `date.uts` (a finished one without it is
+ * skipped). Older API responses return a single track as an object.
  */
-export function mapLastfmRecentTracks(payload: unknown, now = Date.now()): NowPlayingTrack | null {
+export function mapLastfmRecentList(payload: unknown, now = Date.now()): NowPlayingTrack[] {
   const recent = (payload as { recenttracks?: { track?: unknown } } | null)?.recenttracks;
   const raw = recent?.track;
   const tracks = (Array.isArray(raw) ? raw : raw ? [raw] : []) as Array<Record<string, unknown>>;
+  const mapped: NowPlayingTrack[] = [];
   for (const track of tracks) {
     const title = text(track.name);
     const artistField = track.artist as { '#text'?: string; name?: string } | string | undefined;
@@ -89,9 +92,9 @@ export function mapLastfmRecentTracks(payload: unknown, now = Date.now()): NowPl
     if (!title || !artist) continue;
     const isPlaying = (track['@attr'] as { nowplaying?: string } | undefined)?.nowplaying === 'true';
     const uts = positiveInt((track.date as { uts?: string } | undefined)?.uts);
-    if (!isPlaying && (!uts || now - uts * 1000 > RECENT_WINDOW_MS)) continue;
+    if (!isPlaying && !uts) continue;
     const album = (track.album as { '#text'?: string } | undefined)?.['#text'];
-    return {
+    mapped.push({
       title,
       artist,
       album: text(album),
@@ -101,9 +104,19 @@ export function mapLastfmRecentTracks(payload: unknown, now = Date.now()): NowPl
       source: 'lastfm',
       isPlaying,
       observedAt: new Date(isPlaying || !uts ? now : uts * 1000).toISOString(),
-    };
+    });
   }
-  return null;
+  return mapped;
+}
+
+/** From one service's plays, newest first: the playing one, else the newest that finished within RECENT_WINDOW_MS. */
+export function currentPlay(tracks: NowPlayingTrack[] | null | undefined, now = Date.now()): NowPlayingTrack | null {
+  return tracks?.find((track) => track.isPlaying || now - Date.parse(track.observedAt) <= RECENT_WINDOW_MS) ?? null;
+}
+
+/** The playing track, else the newest scrobble that finished within RECENT_WINDOW_MS. */
+export function mapLastfmRecentTracks(payload: unknown, now = Date.now()): NowPlayingTrack | null {
+  return currentPlay(mapLastfmRecentList(payload, now), now);
 }
 
 function providerIds(urls: Array<string | undefined>): Pick<NowPlayingTrack, 'spotifyId' | 'appleMusicId' | 'youtubeId'> {
@@ -184,6 +197,69 @@ export function mapListenBrainzRecent(payload: unknown, now = Date.now()): NowPl
   const listenedAt = positiveInt(latest?.listened_at);
   if (!latest || !listenedAt || now - listenedAt * 1000 > RECENT_WINDOW_MS) return null;
   return mapListenBrainzListen(latest, { isPlaying: false, now });
+}
+
+/** `GET /1/user/<user>/listens?count=10` → every dated listen, newest first, with no time window. */
+export function mapListenBrainzListens(payload: unknown, now = Date.now()): NowPlayingTrack[] {
+  const listens = (payload as { payload?: { listens?: Array<{ listened_at?: number }> } } | null)?.payload?.listens ?? [];
+  return listens
+    .filter((listen) => positiveInt(listen?.listened_at))
+    .map((listen) => mapListenBrainzListen(listen, { isPlaying: false, now }))
+    .filter((track): track is NowPlayingTrack => Boolean(track));
+}
+
+/** How many plays `recent` carries. */
+export const RECENT_LIMIT = 10;
+
+const MERGED_FIELDS = ['mbid', 'isrc', 'spotifyId', 'appleMusicId', 'youtubeId', 'artworkURL', 'album', 'durationMs'] as const;
+
+function sameSong(a: NowPlayingTrack, b: NowPlayingTrack): boolean {
+  if (a.isrc && a.isrc === b.isrc) return true;
+  const key = matchKey(a.artist, a.title);
+  return !key.startsWith('|') && !key.endsWith('|') && key === matchKey(b.artist, b.title);
+}
+
+/** Two reports of one play: the same song, and both playing or less than RECENT_WINDOW_MS apart. */
+function samePlay(a: NowPlayingTrack, b: NowPlayingTrack): boolean {
+  if (!sameSong(a, b)) return false;
+  return (a.isPlaying && b.isPlaying) || Math.abs(Date.parse(a.observedAt) - Date.parse(b.observedAt)) < RECENT_WINDOW_MS;
+}
+
+function playingThenNewest(a: NowPlayingTrack, b: NowPlayingTrack): number {
+  return Number(b.isPlaying) - Number(a.isPlaying) || Date.parse(b.observedAt) - Date.parse(a.observedAt);
+}
+
+/**
+ * `recent` for GET /api/now-playing: plays from every service merged into one
+ * list, newest first, at most `limit` long. Reports of the same play from
+ * different services collapse into the playing one, else the newer, which takes identifiers only the other
+ * had. At most one row is playing, and it comes first: when two services both
+ * report something playing, the most recent sample wins and a different song
+ * from the other stays as an ordinary row.
+ */
+export function mergeRecentPlays(lists: Array<NowPlayingTrack[] | null | undefined>, limit = RECENT_LIMIT): NowPlayingTrack[] {
+  const candidates = lists
+    .flatMap((list, index) => (list ?? []).map((track) => ({ track, list: index })))
+    .filter(({ track }) => !Number.isNaN(Date.parse(track.observedAt)));
+  candidates.sort((a, b) => playingThenNewest(a.track, b.track));
+  // `lists` records which services a row already holds a report from: one
+  // service's list never reports the same play twice, so repeat listens of a
+  // song within one list stay separate rows.
+  const kept: Array<{ track: NowPlayingTrack; reported: NowPlayingTrack; lists: Set<number> }> = [];
+  for (const { track: candidate, list } of candidates) {
+    const match = kept.find((row) => !row.lists.has(list) && samePlay(row.reported, candidate));
+    if (match) {
+      match.lists.add(list);
+      const fill = match.track as unknown as Record<string, unknown>;
+      for (const field of MERGED_FIELDS) {
+        if (fill[field] === undefined && candidate[field] !== undefined) fill[field] = candidate[field];
+      }
+      continue;
+    }
+    const playing = candidate.isPlaying && !kept.some((row) => row.track.isPlaying);
+    kept.push({ track: { ...candidate, isPlaying: playing }, reported: candidate, lists: new Set([list]) });
+  }
+  return kept.map((row) => row.track).sort(playingThenNewest).slice(0, limit);
 }
 
 /** Prefers a track that is actively playing; otherwise the freshest observation. */

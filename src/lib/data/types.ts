@@ -14,10 +14,10 @@ export interface Profile { id: string; handle: string; displayName: string; bio:
 export interface Like { id: string; profileId: string; entityId: string; entityKind: EntityKind; clientVersion: number; createdAt: string }
 export interface MusicReference { id: string; entityId: string; entityKind: EntityKind; label: string; relation: RelationKind; lenses: MusicLens[]; start?: number; end?: number }
 export type RichDocument = { type: 'doc'; content?: Array<Record<string, unknown>> };
-export interface JournalEntry { id: string; profileId: string; entityId: string; entityKind: EntityKind; title?: string; document: RichDocument; plainText: string; worked?: string; didntWork?: string; lenses: MusicLens[]; references: MusicReference[]; public: boolean; createdAt: string; updatedAt: string }
+export interface JournalEntry { id: string; profileId: string; entityId: string; entityKind: EntityKind; title?: string; document: RichDocument; plainText: string; worked?: string; didntWork?: string; lenses: MusicLens[]; references: MusicReference[]; public: boolean; /** Wire name for `public` (docs/IOS_API.md); the server writes both and stores only `published`. */ published?: boolean; createdAt: string; updatedAt: string }
 export interface ListenLog { id: string; profileId: string; songId: string; moods: string[]; note?: string; listenedAt: string }
 export interface CollectionItem { id: string; entityId: string; entityKind: EntityKind; note?: string; position: number }
-export interface Collection { id: string; profileId: string; name: string; slug: string; description: string; public: boolean; items: CollectionItem[]; createdAt: string; updatedAt: string }
+export interface Collection { id: string; profileId: string; name: string; slug: string; description: string; public: boolean; /** Wire name for `public` (docs/IOS_API.md); the server writes both and stores only `published`. */ published?: boolean; items: CollectionItem[]; createdAt: string; updatedAt: string }
 export interface ProfilePin { id: string; profileId: string; targetType: 'entity' | 'entry' | 'collection'; targetId: string; position: number }
 export interface DemoData { profiles: Profile[]; likes: Like[]; entries: JournalEntry[]; listens: ListenLog[]; collections: Collection[]; pins: ProfilePin[]; genreAssertions: EntityGenre[] }
 export interface ProfileBundle { profile: Profile; likes: Like[]; entries: JournalEntry[]; listens: ListenLog[]; collections: Collection[]; pins: ProfilePin[]; genreAssertions: EntityGenre[] }

@@ -1,7 +1,7 @@
 import ResonoteKit
 import SwiftUI
 
-/// The public feed on the Now tab: recent observations across everyone, paged by
+/// The published feed (`Route.feed`): recent writing others chose to publish, paged by
 /// cursor. Pages arrive as complete batches, a refresh never blanks what is shown,
 /// and the first page is kept on disk so the tab opens with words, not skeleton cards.
 @Observable

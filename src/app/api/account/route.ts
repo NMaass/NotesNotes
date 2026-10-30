@@ -17,8 +17,9 @@ async function existingTables(names: string[]): Promise<Set<string>> {
  * Deletes the signed-in account and everything it made (App Store guideline
  * 5.1.1(v)): entries and their references, listens, likes, collections and their
  * items, pins (and other people's pins of this person's entries and collections),
- * genre tags, reports and blocks, the profile, every session on every device, and
- * sign-in codes. One D1 batch, so it happens completely or not at all.
+ * genre tags, reports and blocks, linked scrobbling accounts, the profile, every
+ * session on every device, and sign-in codes. One D1 batch, so it happens
+ * completely or not at all.
  */
 export async function DELETE() {
   if (!(await getDb())) return NextResponse.json({ ok: false, error: 'Cloud data is not configured here.' }, { status: 503 });
@@ -27,7 +28,7 @@ export async function DELETE() {
 
   try {
     const user = await first<{ email: string }>('select email from users where id = ?', userId);
-    const optional = await existingTables(['content_reports', 'profile_blocks', 'login_failures']);
+    const optional = await existingTables(['content_reports', 'profile_blocks', 'login_failures', 'linked_accounts']);
     const statements: Statement[] = [
       sql("delete from profile_pins where target_type = 'entry' and target_id in (select id from journal_entries where profile_id = ?)", userId),
       sql("delete from profile_pins where target_type = 'collection' and target_id in (select id from collections where profile_id = ?)", userId),
@@ -41,6 +42,7 @@ export async function DELETE() {
       sql('delete from entity_genres where created_by = ?', userId),
     ];
     if (optional.has('content_reports')) statements.push(sql('delete from content_reports where reporter_id = ?', userId));
+    if (optional.has('linked_accounts')) statements.push(sql('delete from linked_accounts where profile_id = ?', userId));
     if (optional.has('profile_blocks')) statements.push(sql('delete from profile_blocks where blocker_id = ? or blocked_id = ?', userId, userId));
     statements.push(
       sql('delete from sessions where user_id = ?', userId),

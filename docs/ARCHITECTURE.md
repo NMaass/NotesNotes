@@ -75,7 +75,7 @@ Remote results are not inserted automatically. A future transactional import wor
 
 Sign-in is a six-digit email OTP. The iOS app receives a bearer token (rows in `sessions`, 30-day expiry); see `docs/IOS_API.md`. The cookie session exists only for the retired web client. `requireAuth(intent)` preserves the exact user action. A person who starts writing about a song returns to that draft rather than being diverted into onboarding.
 
-Private first. Entries, collections, listens, and likes belong to their owner and are loaded only for the signed-in owner. A profile page shows only what that person chose to publish: published entries and collections, pins, and attributed genre assertions. There is no follow graph and no notification of other people's activity; a cross-person feed, where it exists, is a reading surface of published entries, not the home screen. Private editor drafts never leave the device until publication. (The native-client API in `docs/IOS_API.md` still describes likes in public bundles; bringing it in line is tracked work.)
+Private first. Entries, collections, listens, and likes belong to their owner and are loaded only for the signed-in owner. A profile page shows only what that person chose to publish: published entries and collections, pins, and attributed genre assertions. There is no follow graph and no notification of other people's activity; a cross-person feed, where it exists, is a reading surface of published entries, not the home screen. Private editor drafts never leave the device until publication. Entries and collections carry a `published` flag, private by default; the contract is in `docs/IOS_API.md`.
 
 ## User genre assertions
 

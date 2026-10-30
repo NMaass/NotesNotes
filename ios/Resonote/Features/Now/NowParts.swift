@@ -110,8 +110,8 @@ enum NowMatchStatus: Equatable {
         switch self {
         case .matching: "Matching…"
         case .matched(0): "On Resonote"
-        case .matched(1): "On Resonote · 1 public thought"
-        case .matched(let count): "On Resonote · \(count) public thoughts"
+        case .matched(1): "On Resonote · 1 published thought"
+        case .matched(let count): "On Resonote · \(count) published thoughts"
         case .unmatched: "No exact match yet"
         case .signInToMatch: "Sign in to find this on Resonote"
         case .couldNotMatch: "Couldn't reach Resonote to match this"
@@ -178,7 +178,7 @@ struct NowTitleBlock<Source: View>: View {
     }
 }
 
-/// One reserved status line ("Matching…", "On Resonote · 3 public thoughts"). Its
+/// One reserved status line ("Matching…", "On Resonote · 3 published thoughts"). Its
 /// height is held even when empty, so a status arriving never pushes controls down.
 /// A weak match offers its candidates from a menu in the action slot, so they never
 /// push the note field or the feed around.

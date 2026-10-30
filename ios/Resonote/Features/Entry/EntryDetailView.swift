@@ -2,8 +2,9 @@ import ResonoteKit
 import SwiftUI
 
 /// One journal entry in full: what it is about, who wrote it and when, the writing,
-/// its lenses and reflections, and the music it links. Owners can edit, change who
-/// can read it, or delete it; anyone can pin it.
+/// its lenses and reflections, and the music it links. Owners can edit, publish or
+/// make it private, or delete it; anyone can pin it. Report and Block are offered only
+/// on someone else's published writing.
 struct EntryDetailView: View {
     let entryId: String
 
@@ -49,7 +50,7 @@ struct EntryDetailView: View {
         .toolbar {
             if let entry, isOwner(entry), !isDeleting {
                 ToolbarItem(placement: .topBarTrailing) { ownerMenu(entry) }
-            } else if let entry, model.isSignedIn, !isOwner(entry), !entry.profileId.isEmpty {
+            } else if let entry, model.isSignedIn, !isOwner(entry), !entry.profileId.isEmpty, entry.isPublic {
                 ToolbarItem(placement: .topBarTrailing) { readerMenu(entry) }
             }
         }
@@ -84,12 +85,14 @@ struct EntryDetailView: View {
                 Label("Edit", systemImage: "square.and.pencil")
             }
             Button {
-                toggleVisibility(entry)
+                // The end state is decided from what the person sees now, so the last tap wins.
+                model.setPublished(entryId: entry.id, !entry.isPublic)
+                AccessibilityNotification.Announcement(entry.isPublic ? "Entry is private" : "Entry published").post()
             } label: {
                 if entry.isPublic {
-                    Label("Make private", systemImage: "lock")
+                    Label(VisibilityCopy.unpublishLabel, systemImage: "lock")
                 } else {
-                    Label("Make public", systemImage: "globe")
+                    Label(VisibilityCopy.publicLabel, systemImage: "globe")
                 }
             }
             Divider()
@@ -127,22 +130,6 @@ struct EntryDetailView: View {
 
     private func edit(_ entry: JournalEntry) {
         router.present(.compose(ComposerContext(entityKind: entry.entityKind, entityId: entry.entityId, entryId: entry.id)))
-    }
-
-    /// Visibility is not an edit to the writing, so `updatedAt` (and feed order) stays put.
-    /// An unpublished edit of this entry follows the new choice, so publishing it later
-    /// never undoes "Make private".
-    private func toggleVisibility(_ entry: JournalEntry) {
-        var updated = entry
-        updated.isPublic.toggle()
-        model.save(updated)
-        let key = Draft.key(kind: entry.entityKind, entityId: entry.entityId, entryId: entry.id)
-        let drafts = model.drafts
-        if var draft = drafts.load(key: key), draft.isPublic != updated.isPublic {
-            draft.isPublic = updated.isPublic
-            draft.updatedAt = Date()
-            drafts.save(draft)
-        }
     }
 
     private func delete() {
@@ -202,6 +189,11 @@ private struct EntryDetailContent: View {
 
     // MARK: Byline
 
+    private var isOwnEntry: Bool {
+        guard let mine = model.profile?.id else { return false }
+        return entry.profileId == mine || entry.profileId.isEmpty
+    }
+
     private var byline: some View {
         HStack(alignment: .center, spacing: RN.Space.m) {
             VStack(alignment: .leading, spacing: 2) {
@@ -228,11 +220,10 @@ private struct EntryDetailContent: View {
                     if let date = ResonoteDate.parse(entry.updatedAt) {
                         Text(date, format: .dateTime.month(.wide).day().year())
                     }
-                    if !entry.isPublic {
+                    // The writer sees which of their entries are published; readers only ever see published ones.
+                    if isOwnEntry {
                         Text("·").accessibilityHidden(true)
-                        Label("Only you", systemImage: "lock")
-                            .labelStyle(.titleAndIcon)
-                            .imageScale(.small)
+                        VisibilityMarker(isPublic: entry.isPublic)
                     }
                 }
                 .font(.footnote)

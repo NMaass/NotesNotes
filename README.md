@@ -16,14 +16,16 @@ NotesNotes (code name Resonote) is a native SwiftUI app for iOS 26 backed by a C
 
 ## What the app does
 
-- Opens on your own recent listening (Apple Music, scrobbled Spotify through Last.fm or ListenBrainz, the Journaling Suggestions picker, Shazam, shared links) and asks whether you want to write about a song. Nobody types a song name. See [`docs/IOS_NOW_PLAYING.md`](docs/IOS_NOW_PLAYING.md).
+- Opens on what you're playing, your drafts, your own logged listens, and your recent notes; other people's published writing is one tap away, never the home screen.
+- Knows what you listened to so nobody types a song name: the Music app and Apple Music history, Spotify and other scrobblers through Last.fm (Sign in with Last.fm) or ListenBrainz, the Journaling Suggestions picker, Shazam, and shared links, ranked into one recent list with the likeliest song attached. See [`docs/IOS_NOW_PLAYING.md`](docs/IOS_NOW_PLAYING.md).
+- Write first, attach later: a note saved with no song keeps its time and picks up the song that was playing when a source reports it.
 - Rating-free journal entries with freeform writing, optional reflections, lenses, and rerollable prompts.
 - Explicit `\` music references in prose. The writer picks the exact artist, album, song, or genre; prose is never silently autolinked.
 - Per-reference relationship and lens chips such as “reminds me of” and “production,” stored as queryable data.
 - Human-authored music connections derived from your own references, never “users also liked” logic.
 - A private listening log with moods, and freeform collections that mix artists, albums, songs, and genres.
 - Song credits, structural facts, source/confidence labels, and explainable collaborator observations.
-- A profile page that shows only what you chose to publish; report and block for anything public; account deletion.
+- Entries and collections start private; publish one explicitly and make it private again any time. A profile page shows only what you published, never your likes or listens; report and block for anything public; account deletion.
 - Home Screen and Lock Screen widgets, Action button Controls, App Shortcuts, and a share extension.
 - Durable offline sync: every write is queued on the phone until the server confirms it.
 

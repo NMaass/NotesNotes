@@ -56,6 +56,8 @@ struct NowPlayingAccessory: View {
             } label: {
                 ListeningWaveform(isActive: nowPlaying.isIdentifying, height: 14)
                     .frame(width: 22, height: 22)
+                    // Another app is audible and nothing vouches for this song.
+                    .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.primary)
             }
             .buttonStyle(.plain)
             .frame(minWidth: 36, maxHeight: .infinity)

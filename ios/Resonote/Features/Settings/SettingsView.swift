@@ -1,3 +1,4 @@
+import AuthenticationServices
 import ResonoteKit
 import SwiftUI
 import UIKit
@@ -7,6 +8,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(\.openURL) private var openURL
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     private enum SourceField: Hashable { case lastfm, listenbrainz }
 
@@ -20,10 +22,14 @@ struct SettingsView: View {
     @State private var confirmDeleteAccount = false
     @State private var isDeletingAccount = false
     @State private var deleteError: String?
+    @State private var isSigningInToLastfm = false
+    @State private var confirmUnlinkLastfm = false
 
     var body: some View {
         Form {
             sourcesSection
+            spotifySection
+            identifySection
             widgetsSection
             if !model.blockedProfiles.isEmpty {
                 blockedSection
@@ -38,6 +44,13 @@ struct SettingsView: View {
             if previous != nil { saveUsernames() }
         }
         .onDisappear { saveUsernames() }
+        .task(id: model.hasLiveSession) { await nowPlaying.lastfm.load() }
+        .confirmationDialog("Unlink Last.fm?", isPresented: $confirmUnlinkLastfm, titleVisibility: .visible) {
+            Button("Unlink", role: .destructive) { Task { await nowPlaying.lastfm.unlink() } }
+            Button("Keep it linked", role: .cancel) {}
+        } message: {
+            Text("Resonote stops reading your scrobbles. You can sign in again any time.")
+        }
         .confirmationDialog("Sign out of Resonote?", isPresented: $confirmSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { model.signOut() }
             Button("Stay signed in", role: .cancel) {}
@@ -63,18 +76,108 @@ struct SettingsView: View {
                 }
                 .accessibilityHint("Opens Resonote in the Settings app to allow Apple Music")
             }
-            usernameField("Last.fm", field: .lastfm, text: lastfmBinding)
+            lastfmRows
             usernameField("ListenBrainz", field: .listenbrainz, text: listenbrainzBinding)
         } header: {
             Text("Listening sources")
         } footer: {
             VStack(alignment: .leading, spacing: RN.Space.s) {
+                if let failure = nowPlaying.lastfm.failure {
+                    Text(failure)
+                        .foregroundStyle(RN.Palette.rustText)
+                }
                 if !model.isSignedIn, nowPlaying.linkedSources.hasRemote {
                     Text("Sign in to read Last.fm and ListenBrainz.")
                 }
-                Text("Spotify doesn't let apps read playback anymore. Connect Spotify to Last.fm (last.fm → Settings → Applications) or ListenBrainz (listenbrainz.org → Settings → Music services) and add that username here.")
-                Text("YouTube Music: Share a song from YouTube Music to Resonote, or tap Identify — Shazam can hear what's playing, even in AirPods.")
+                Text("Resonote reads your recent listens from these so you rarely have to name a song. YouTube Music: share a song to Resonote, or tap Identify — Shazam can hear what's playing, even in AirPods.")
             }
+        }
+        .listRowBackground(RN.Palette.paper2)
+    }
+
+    // MARK: Last.fm
+
+    @ViewBuilder
+    private var lastfmRows: some View {
+        let link = nowPlaying.lastfm
+        if let account = link.account {
+            LabeledContent("Last.fm") {
+                Text(account.username)
+                    .foregroundStyle(RN.Palette.muted)
+            }
+            .accessibilityLabel("Last.fm, linked as \(account.username)")
+            Button("Unlink Last.fm", role: .destructive) { confirmUnlinkLastfm = true }
+                .disabled(link.isWorking)
+        } else {
+            if link.state != .notConfigured {
+                Button {
+                    signInToLastfm()
+                } label: {
+                    StableLabel(isSigningInToLastfm || link.isWorking ? "Signing in to Last.fm…" : "Sign in with Last.fm", among: ["Sign in with Last.fm", "Signing in to Last.fm…"])
+                }
+                .disabled(!model.hasLiveSession || isSigningInToLastfm || link.isWorking)
+                .accessibilityHint("Opens Last.fm to let Resonote read your scrobbles")
+            }
+            // Without web auth on this server, or for a username typed before it existed.
+            if link.state == .notConfigured || nowPlaying.linkedSources.lastfmUser != nil {
+                usernameField("Last.fm", field: .lastfm, text: lastfmBinding)
+            }
+        }
+    }
+
+    /// Last.fm web auth: the server hands out the approval page, Last.fm redirects to
+    /// `resonote://lastfm-auth?token=…`, and the server exchanges the token for a session.
+    private func signInToLastfm() {
+        isSigningInToLastfm = true
+        Task {
+            defer { isSigningInToLastfm = false }
+            guard let auth = await nowPlaying.lastfm.authURL() else { return }
+            do {
+                let callback = try await webAuthenticationSession.authenticate(using: auth.url, callbackURLScheme: auth.callbackScheme)
+                await nowPlaying.lastfm.finish(callback: callback)
+                lastfmDraft = nil
+            } catch {
+                // Closing the Last.fm page is a choice, not an error.
+            }
+        }
+    }
+
+    // MARK: Spotify
+
+    private var spotifySection: some View {
+        Section {
+            Link(destination: SourceLinks.lastfmApplications) {
+                AboutLinkRow(title: "Connect Spotify to Last.fm")
+            }
+            Link(destination: SourceLinks.listenbrainzServices) {
+                AboutLinkRow(title: "Connect Spotify to ListenBrainz")
+            }
+        } header: {
+            Text("Spotify")
+        } footer: {
+            Text("Spotify doesn't let apps read playback. Connect it once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them, on every device.")
+        }
+        .listRowBackground(RN.Palette.paper2)
+    }
+
+    // MARK: Identify
+
+    private var identifySection: some View {
+        @Bindable var nowPlaying = nowPlaying
+        return Section {
+            Toggle(isOn: $nowPlaying.autoIdentify) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Identify on its own")
+                    Text("When you start a note, something is playing, and no source can say what, Resonote listens for a few seconds with Shazam.")
+                        .font(.footnote)
+                        .foregroundStyle(RN.Palette.muted)
+                }
+            }
+            .tint(RN.Palette.rust)
+        } header: {
+            Text("Identify")
+        } footer: {
+            Text("This opens the microphone, so the orange dot appears while Resonote listens. Nothing is recorded or kept. Off, Identify waits for you to tap it.")
         }
         .listRowBackground(RN.Palette.paper2)
     }
@@ -181,6 +284,7 @@ struct SettingsView: View {
                 systemImage: "button.programmable",
                 detail: "Settings → Action Button → Controls → Resonote → Note Song."
             )
+            shazamShortcutRow
             HowToRow(
                 title: "Control Center",
                 systemImage: "switch.2",
@@ -190,6 +294,22 @@ struct SettingsView: View {
             Text("Widgets & Action button")
         }
         .listRowBackground(RN.Palette.paper2)
+    }
+
+    @ViewBuilder
+    private var shazamShortcutRow: some View {
+        let detail = "Recognizes the song with Shazam, even in headphones, and opens Resonote's Note a Song with it. Put it on the Action button (Settings → Action Button → Shortcut), or run it from a personal automation in Shortcuts, like when Spotify opens or your AirPods connect."
+        if let link = ShazamShortcut.link {
+            Link(destination: link) {
+                HowToRow(title: "Add the Shazam → Note a Song shortcut", systemImage: "shazam.logo", detail: detail)
+            }
+        } else {
+            HowToRow(
+                title: "Shazam → Note a Song shortcut",
+                systemImage: "shazam.logo",
+                detail: "In Shortcuts, add Recognize Music, then Resonote's Note a Song with the song's title and artist. " + detail
+            )
+        }
     }
 
     // MARK: Blocked people
@@ -339,6 +459,19 @@ private struct AboutLinkRow: View {
                 .foregroundStyle(RN.Palette.ink)
         }
     }
+}
+
+/// Where people connect Spotify to the scrobblers Resonote reads.
+enum SourceLinks {
+    static let lastfmApplications = URL(string: "https://www.last.fm/settings/applications")!
+    static let listenbrainzServices = URL(string: "https://listenbrainz.org/settings/music-services/details/")!
+}
+
+/// The shared "Shazam → Note a Song" shortcut (docs/IOS_NOW_PLAYING.md). To be filled
+/// with the iCloud link (https://www.icloud.com/shortcuts/…) once the shortcut is
+/// published from the owner's device; until then Settings explains how to build it.
+enum ShazamShortcut {
+    static let link: URL? = nil
 }
 
 /// Pages on the Resonote website the app links to.

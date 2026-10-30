@@ -209,6 +209,11 @@ export function JournalEditor({ entity, existingEntry }: { entity: CatalogEntity
     if (!profile || !editor) return;
     const now = new Date().toISOString();
     const document = editor.getJSON() as RichDocument;
+    // The server stores only `published` (missing = private). The web has no
+    // visibility control: an edit keeps what the entry already had (it may
+    // have been published or kept private on the phone), and a new entry is
+    // published, as this page always has been (it opens on the public profile).
+    const published = existingEntry ? existingEntry.published ?? existingEntry.public : true;
     const entry: JournalEntry = {
       id: existingEntry?.id ?? uid('entry'),
       profileId: profile.id,
@@ -221,7 +226,8 @@ export function JournalEditor({ entity, existingEntry }: { entity: CatalogEntity
       didntWork: didntWork.trim() || undefined,
       lenses: selectedLenses,
       references: referencesFromDocument(document),
-      public: true,
+      public: published,
+      published,
       createdAt: existingEntry?.createdAt ?? now,
       updatedAt: now,
     };

@@ -19,21 +19,61 @@ shared defaults) and use it as their keychain access group for the bearer token.
 ## How "now playing" works (and why)
 
 iOS has no public API to read what Spotify or YouTube Music is playing (MediaRemote
-is private and rejected by App Review). Resonote samples these sources on demand —
-when the app becomes active, when an App Intent runs, when the widget reloads:
+is private and rejected by App Review). Resonote leads with recent listening history and
+treats the current song as a bonus. It samples these sources on demand — when the app
+becomes active, when an App Intent runs, when the widget reloads:
 
-1. **Music app** — `MPMusicPlayerController.systemMusicPlayer` (real time, Apple Music only).
-2. **Last.fm / ListenBrainz** — the backend's `GET /api/now-playing` reads the person's
-   public scrobbling accounts. Spotify scrobbles to both, so this covers Spotify
-   without Spotify's 5-user Development Mode cap.
-3. **Shazam** — `SHManagedSession`, when the person taps Identify (it can also hear what
-   the iPhone plays to AirPods).
-4. **Links** — the share extension and a paste row accept Spotify, Apple Music, and
+1. **Music app** — `MPMusicPlayerController.systemMusicPlayer` (real time, Apple Music
+   only), enriched from MusicKit's `SystemMusicPlayer.shared.queue.currentEntry` with the
+   ISRC when it is the same song (skipped on Mac Catalyst, where that API is missing).
+2. **Apple Music history** — `AppleMusicHistory` (`Resonote/Services/`): MusicKit's
+   recently played songs (undated) and library songs by `lastPlayedDate`, 10 of each,
+   loaded at most once a minute.
+3. **Last.fm / ListenBrainz** — the backend's `GET /api/now-playing` returns `track` and a
+   `recent` list of up to 10 plays from the person's scrobbling accounts. Spotify scrobbles
+   to both, so this covers Spotify without Spotify's 5-user Development Mode cap. Last.fm
+   is linked by web auth (`LastfmLink`, SwiftUI's `webAuthenticationSession`, callback
+   `resonote://lastfm-auth`, `LastfmAuth` in ResonoteKit); a typed username remains only
+   when the server has no Last.fm keys or one was already saved.
+4. **Journaling Suggestions** — the capture sheet's `JournalingSuggestionsPicker`
+   (`CaptureJournalingButton`) turns `GenericMedia` and `Song` items into recent plays.
+   Behind `#if canImport(JournalingSuggestions)`; the entitlement is in `project.yml`.
+5. **Shazam** — `SHManagedSession`, when the person taps Identify (it can also hear what
+   the iPhone plays to AirPods). The capture sheet offers it prominently
+   (`NowPlayingService.suggestsIdentify`) when `AVAudioSession.isOtherAudioPlaying` and no
+   source names the song; `autoIdentify` (Settings → Identify on its own, off by default)
+   starts it without a tap.
+6. **Links** — the share extension and a paste row accept Spotify, Apple Music, and
    YouTube Music links; the backend resolves them.
 
 `NowPlayingService` (`Resonote/Services/`) owns this. Every source normalizes into
-`NowPlayingTrack`; `POST /api/music/resolve` maps it to a catalog `Song` (importing from
-MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, prompt).
+`NowPlayingTrack` or `RecentPlay`; `RecentPlayList.rank` (ResonoteKit) merges reports of
+the same play, keeps only the newest playing row live, orders the rest newest first
+(undated last), and pre-selects the playing row or else the newest play within 12 hours.
+The capture sheet attaches the pre-selected play when nothing is playing and shows the
+next few as chips. `POST /api/music/resolve` maps a track to a catalog `Song` (importing
+from MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, prompt).
+
+## The Now tab
+
+`NowView` opens on the person's own material: the now-playing card, drafts (including
+written-first notes waiting for their song), "Your listening" (the 5 newest logged
+listens), and "Recent notes" (the 3 newest own entries, with See all switching to the
+Journal tab). Signed out, one sign-in invitation replaces those sections. The cross-person
+feed is a pushed screen, `Route.feed` → `FeedView`, reached from the "Published by others"
+row; it is never the home screen.
+
+## Private by default
+
+`JournalEntry.isPublic` and `MusicCollection.isPublic` mean "published". They decode from
+`published`, else the legacy `public`, else `false`, and encode both keys; the server
+publishes only on `published: true` (`docs/IOS_API.md`). New entries, capture-sheet and
+share-extension notes, drafts, and collections start private. `model.setPublished(entryId:_:)` and
+`setPublished(collectionId:_:)` decide the end state at tap time, like `setPinned`, and go
+through `SyncOutbox`; the entry version also updates an unsaved edit draft so saving it
+can't undo the choice. `VisibilityCopy` holds the wording ("Only me", "Published",
+"Publish", "Make private") and `VisibilityMarker` shows the owner which state a card is
+in. Someone else's profile never shows their likes.
 
 ## Data flow
 
@@ -56,8 +96,9 @@ MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, pr
   undone locally; the words of a refused or cleared entry, and a listen's note, go back to
   their writer's drafts. A draft is deleted only after its published entry is queued.
   Deleting an entry or collection also queues an unpin when a pin for it is still waiting.
-- Likes, pins, and genre tags decide their end state at tap time (`setLiked`, `setPinned`,
-  `setGenre`), so an action resumed after sign-in can't undo what the account already has.
+- Likes, pins, genre tags, and publishing decide their end state at tap time (`setLiked`,
+  `setPinned`, `setGenre`, `setPublished`), so an action resumed after sign-in can't undo
+  what the account already has.
 - `requireAuth { … }` runs the action now, or after sign-in once the sign-in sheet has
   finished leaving, so a resumed action can present its own sheet.
 - `Router` (`Resonote/App/Router.swift`): `tab`, one `[Route]` path per tab, one
@@ -78,6 +119,16 @@ MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, pr
   so the next person on the iPhone never sees them. Quick words from the capture and
   share sheets are added to a draft with `DraftStore.append`, never replacing it; the
   capture sheet also keeps its words in a draft whenever the app leaves the foreground.
+- Write first, attach later: a note saved with no song is a draft of its own
+  (`Draft.noteId`, keyed `note-<id>`) that keeps `writtenAt`. Whenever the recent-play
+  list changes, `model.attachWrittenNotes` attaches the play covering that moment
+  (`WriteFirst.automaticPlay`, built on `RecentPlayList.play(covering:in:)`), from every
+  ranked report, not only the 10 shown. A note older than the newest 10 scrobbles reach
+  asks `GET /api/now-playing?before=` for the history before its moment (a few notes per
+  refresh, each again after 15 minutes, for up to 14 days). A song the
+  person chose or removed (`Draft.Attachment.person`) is never overridden. Opening the
+  note from Drafts shows "attached automatically" with Change; saving writes the entry
+  through `model.saveWrittenNote`, dated `writtenAt`.
 - Block changes are kept for one owner and only ever sent with that owner's session.
 - `catalog.json` keeps the rows the person's own journal references plus the 2,000 most
   recently seen; the in-memory index keeps everything for the session.

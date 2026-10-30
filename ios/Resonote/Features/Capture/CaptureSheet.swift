@@ -5,10 +5,17 @@ import UIKit
 /// The quick "you're listening to X — want to write about it?" sheet, opened from
 /// the Now card, the accessory, widgets, controls, the Action button, and shared links.
 ///
-/// It finds the song first (current track, Shazam, or a link), then offers a prompt,
+/// It finds the song first (current track, a recent play, Shazam, or a link), then offers a prompt,
 /// a few words, and tags. The song is pinned as soon as the person starts, so a track
 /// change in another app never moves their words to a different song. Opened from
 /// outside the app, it checks the sources before treating the song on screen as current.
+/// Recent plays sit under the header: with nothing playing, the likeliest recent song is
+/// attached on its own, and the next few are one tap away.
+///
+/// Write first, attach later: with no song in sight the person can still write. The note
+/// is saved with the moment it was begun, and the listen covering that moment attaches
+/// itself later (`WriteFirst`). Opened again from Drafts (`CapturePreset.noteKey`), the
+/// sheet shows that song as "attached automatically" with a way to change or remove it.
 struct CaptureSheet: View {
     var preset: CapturePreset
     var startsListening: Bool = false
@@ -28,7 +35,8 @@ struct CaptureSheet: View {
     @State private var addedMoods: [String] = []
     @State private var moodDraft = ""
     @State private var genreChoices: [String: Bool] = [:]
-    @State private var isPublic = true
+    // Private first: publishing is the person's choice, never the default.
+    @State private var isPublic = false
     @FocusState private var focus: CaptureField?
 
     // What it is about, and how the sheet got there.
@@ -44,6 +52,10 @@ struct CaptureSheet: View {
     @State private var pinResolveRequest = 0
     /// Opened from outside the app: the song on screen may be minutes old until the sources answer.
     @State private var isCheckingSources = false
+    /// The recent play the person (or the sheet, on opening) attached.
+    @State private var attachedPlay: RecentPlay?
+    /// The person chose the song (a recent play, Identify, a link): no "automatically attached".
+    @State private var personChose = false
 
     // Finishing.
     @State private var confirmation: String?
@@ -52,11 +64,23 @@ struct CaptureSheet: View {
     /// Words this sheet put in a draft while the app was away.
     @State private var autosaved: CaptureAutosave?
 
+    // Write first, attach later.
+    /// The person chose to write with no song: the song playing now doesn't take the note.
+    @State private var writingFirst = false
+    /// When the person began writing: the moment a written-first note is about.
+    @State private var startedWritingAt: Date?
+    /// The written-first note this sheet opened (from Drafts), if any.
+    @State private var writtenNote: Draft?
+    /// The id a note written first in this sheet is saved under.
+    @State private var freshNoteId = Identifiers.make()
+    /// The person removed the note's song: nothing attaches to it on its own again.
+    @State private var songDetached = false
+
     private enum Display: Equatable {
         case track, looking, nothing, listening, readingLink, identifyFailed, linkFailed, linkUnreachable, signInForLink
     }
 
-    private static let primaryLabels = ["Save note", "Log listen", "Saved to your journal", "Listen logged"]
+    private static let primaryLabels = ["Save note", "Log listen", "Saved to your journal", "Listen logged", "Saved for its song"]
     /// The origin `appIntentRouting()` uses when a Shortcut hands over a song.
     static let shortcutOrigin = "shortcut"
     private static let customMoodLimit = 32
@@ -70,6 +94,8 @@ struct CaptureSheet: View {
         _lenses = State(initialValue: preset.lens.map { [$0] } ?? [])
         let mood = preset.mood?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         _moods = State(initialValue: mood.isEmpty ? [] : [mood])
+        // A note from Drafts: never show the song playing now, even before it loads.
+        _writingFirst = State(initialValue: preset.noteKey != nil)
     }
 
     var body: some View {
@@ -86,7 +112,13 @@ struct CaptureSheet: View {
         let resolution: ResolveResponse?
         var phase: NowPlayingService.Phase
         var isInSync = true
-        if let pinned, !CaptureMatch.same(pinned.track, nowPlaying.track) {
+        if writingFirst {
+            // Written first: only a song attached to the note counts, never whatever plays now.
+            track = pinned?.track
+            resolution = pinned?.resolution
+            phase = pinned?.isResolving == true ? .resolving : .unmatched
+            isInSync = false
+        } else if let pinned, !CaptureMatch.same(pinned.track, nowPlaying.track) {
             track = pinned.track
             resolution = pinned.resolution
             phase = pinned.isResolving ? .resolving : .unmatched
@@ -117,6 +149,7 @@ struct CaptureSheet: View {
         case .idle, .listening, .identifyFailed: break
         }
         if subject.track != nil { return .track }
+        if writingFirst { return .nothing }
         switch nowPlaying.phase {
         case .idle, .looking, .resolving: return .looking
         case .ready, .unmatched, .nothing: return .nothing
@@ -147,6 +180,7 @@ struct CaptureSheet: View {
             VStack(alignment: .leading, spacing: RN.Space.l) {
                 headerRow(subject: subject, display: display)
                 statusLine(subject: subject, display: display)
+                recentSection(subject: subject, display: display)
                 content(subject: subject, display: display, suggestions: suggestions)
             }
             .padding(.horizontal, RN.Space.gutter)
@@ -168,7 +202,7 @@ struct CaptureSheet: View {
             .holdsUnsavedInput(hasUnsavedText)
             .confirmationDialog("Keep what you wrote?", isPresented: exitDialogIsPresented, titleVisibility: .visible) {
                 let exit = pendingExit ?? .close
-                if subject.song != nil || subject.track != nil {
+                if subject.song != nil || subject.track != nil || writingFirst {
                     Button("Save as draft") {
                         // A song not matched yet keeps the words with its track; they move to the
                         // song's draft once it's matched. Moods and genre picks are saved now.
@@ -183,7 +217,9 @@ struct CaptureSheet: View {
                 }
                 Button("Keep writing", role: .cancel) {}
             } message: {
-                Text(subject.song == nil && subject.track != nil
+                Text(writingFirst && subject.track == nil
+                    ? "It waits in Drafts on the Now tab, and the song you were playing attaches when a source reports it."
+                    : subject.song == nil && subject.track != nil
                     ? "It waits in Drafts on the Now tab, and joins this song's draft once Resonote matches it."
                     : "A draft stays on this device until you publish it.")
             }
@@ -205,8 +241,16 @@ struct CaptureSheet: View {
                 if phase != .active { autosave() }
             }
             .onDisappear {
-                // Closed with the words cleared: nothing of them should linger in a draft.
-                if confirmation == nil, !note.hasText { dropAutosave(subject: subject) }
+                if let writtenNote {
+                    // A note from Drafts keeps its words and the song as the person left them;
+                    // closed with its words cleared, it goes, as publishing it empty would.
+                    if confirmation == nil {
+                        if note.hasText { keepWordsInDraft(subject: subject) } else { model.drafts.delete(key: writtenNote.key) }
+                    }
+                } else if confirmation == nil, !note.hasText {
+                    // Closed with the words cleared: nothing of them should linger in a draft.
+                    dropAutosave(subject: subject)
+                }
             }
             // Every request from outside counts, even the same one twice (Identify pressed again).
             .onChange(of: router.captureRequest) { _, _ in
@@ -260,9 +304,18 @@ struct CaptureSheet: View {
             CaptureHeader(art: .symbol("link"), title: "Shared link", subtitle: "Resonote can't be reached right now.", track: nil)
         case .signInForLink:
             CaptureHeader(art: .symbol("link"), title: "Shared link", subtitle: "Sign in to note the song you shared.", track: nil)
+        case .nothing where writingFirst:
+            CaptureHeader(art: .symbol("square.and.pencil"), title: "Write first", subtitle: writtenFirstSubtitle, track: nil)
         case .nothing:
             CaptureHeader(art: .symbol("music.note"), title: "Nothing playing that Resonote can see.", subtitle: "Identify it, paste a link, or search.", track: nil)
         }
+    }
+
+    /// "Written 5 min ago. …": when the note is from, and what happens next.
+    private var writtenFirstSubtitle: String {
+        let next = songDetached ? "No song, until you pick one." : "The song you were playing attaches when a source reports it."
+        guard let startedWritingAt else { return next }
+        return "Written \(NowRelativeTime.phrase(since: startedWritingAt, now: Date())). \(next)"
     }
 
     private func statusLine(subject: CaptureSubject, display: Display) -> some View {
@@ -270,7 +323,6 @@ struct CaptureSheet: View {
         var showsWaveform = false
         var actionTitle: String?
         var action: (() -> Void)?
-        var candidates: [SearchResult]?
         switch display {
         case .listening:
             text = "Listening…"
@@ -319,8 +371,8 @@ struct CaptureSheet: View {
                 actionTitle = "Sign in"
                 action = { signIn() }
             } else if status == .unmatched {
-                candidates = subject.candidates
-                if candidates == nil {
+                // Candidates are offered as rows with artwork below; without any, search.
+                if subject.candidates == nil {
                     actionTitle = "Search"
                     action = { requestExit(.search) }
                 }
@@ -331,11 +383,102 @@ struct CaptureSheet: View {
             lines: 2,
             showsWaveform: showsWaveform,
             actionTitle: actionTitle,
-            action: action,
-            candidates: candidates,
-            isChoosing: subject.phase == .resolving,
-            onChoose: { choose($0) }
+            action: action
         )
+    }
+
+    // MARK: Recent plays
+
+    /// The attached recent play and a few others as chips, while a song is on screen.
+    @ViewBuilder
+    private func recentSection(subject: CaptureSubject, display: Display) -> some View {
+        if display == .track, model.isSignedIn, confirmation == nil {
+            let attached = attachedRecent(subject: subject)
+            let plays = nowPlaying.recent.plays
+            if attached != nil || plays.count > 1 {
+                CaptureRecentPlays(
+                    plays: plays,
+                    attached: attached,
+                    isAutomatic: !personChose && !isCheckingSources,
+                    onChoose: { choose(play: $0) },
+                    onJournalingPick: { picked, icon in pickedInJournal(picked, icon: icon) },
+                    isWrittenFirst: writingFirst,
+                    onDetach: writingFirst ? { detachSong() } : nil
+                )
+            }
+        }
+    }
+
+    /// The recent play the sheet's song is: the one attached, else the ranked row for the same song.
+    private func attachedRecent(subject: CaptureSubject) -> RecentPlay? {
+        guard let track = subject.track else { return nil }
+        if let attachedPlay, CaptureMatch.same(attachedPlay.track(), track) { return attachedPlay }
+        let key = TrackText.matchKey(artist: track.artist, title: track.title)
+        return nowPlaying.recent.plays.first { $0.matchKey == key }
+    }
+
+    /// The person tapped a recent play: it becomes the sheet's song, words and lenses kept.
+    private func choose(play: RecentPlay) {
+        personChose = true
+        attach(play)
+    }
+
+    private func attach(_ play: RecentPlay) {
+        if flow == .identifyFailed { flow = .idle }
+        attachedPlay = play
+        pin(to: play.track())
+        resolvePinnedIfNeeded()
+    }
+
+    /// Songs picked in the Journaling Suggestions sheet join the recent list; the newest is attached.
+    private func pickedInJournal(_ plays: [RecentPlay], icon: URL?) {
+        nowPlaying.addJournalingPicks(plays, icon: icon)
+        let newest = plays.max { ($0.playedAt ?? .distantPast) < ($1.playedAt ?? .distantPast) }
+        if let newest { choose(play: newest) }
+    }
+
+    /// Written first: the person takes the song off the note. It waits with no song, and
+    /// nothing attaches on its own again; they can still pick one.
+    private func detachSong() {
+        personChose = true
+        songDetached = true
+        attachedPlay = nil
+        pinned = nil
+        genreChoices = [:]
+    }
+
+    /// The person chose to write with no song.
+    private func startWritingFirst() {
+        writingFirst = true
+        if flow == .identifyFailed { flow = .idle }
+        focus = .note
+        if detent != .large { detent = .large }
+    }
+
+    /// Opens a written-first note from Drafts: its words, and the song attached to it.
+    private func open(note saved: Draft) {
+        writtenNote = saved
+        writingFirst = true
+        startedWritingAt = saved.writtenAt
+        note.text = saved.document.plainText
+        lenses = saved.lenses
+        isPublic = saved.isPublic
+        songDetached = saved.attachment == .person && saved.track == nil
+        if let track = saved.track {
+            personChose = saved.attachment == .person
+            attachedPlay = RecentPlay(track: track)
+            pin(to: track)
+            resolvePinnedIfNeeded()
+        } else {
+            personChose = songDetached
+        }
+    }
+
+    /// Nothing is playing: attach the likeliest recent play (`RecentPlayList.preselected`),
+    /// so a note can start without anyone naming the song.
+    private func attachPreselected() {
+        guard pinned == nil, nowPlaying.track == nil, let preselected = nowPlaying.recent.preselected else { return }
+        attach(preselected)
     }
 
     // MARK: Content
@@ -349,6 +492,12 @@ struct CaptureSheet: View {
                     .font(.subheadline)
                     .foregroundStyle(RN.Palette.muted)
             } else if display == .track {
+                if nowPlaying.suggestsIdentify, !personChose {
+                    CaptureIdentifyPrompt(isListening: nowPlaying.isIdentifying) { startIdentify(fromTrack: true) }
+                }
+                if let candidates = subject.candidates, !isCheckingSources {
+                    CaptureCandidateRows(candidates: candidates, isBusy: subject.phase == .resolving) { choose($0) }
+                }
                 form(subject: subject, suggestions: suggestions)
             } else {
                 // The form at its final size while the song is found, so arriving only swaps content.
@@ -358,6 +507,19 @@ struct CaptureSheet: View {
                     .accessibilityHidden(true)
             }
         case .nothing, .identifyFailed, .linkFailed, .linkUnreachable:
+            if writingFirst, display == .nothing || display == .identifyFailed {
+                writeFirstForm
+            } else if display == .nothing || display == .identifyFailed, model.isSignedIn {
+                CaptureWriteFirstButton { startWritingFirst() }
+            }
+            if display == .nothing || display == .identifyFailed {
+                CaptureRecentChoices(
+                    plays: nowPlaying.recent.plays,
+                    icons: nowPlaying.journalingIcons,
+                    onChoose: { choose(play: $0) },
+                    onJournalingPick: { plays, icon in pickedInJournal(plays, icon: icon) }
+                )
+            }
             CaptureFallbackOptions(
                 isListening: nowPlaying.isIdentifying,
                 microphoneDenied: nowPlaying.identifyFailure == .microphoneDenied || SongRecognizer.microphoneDenied,
@@ -371,6 +533,30 @@ struct CaptureSheet: View {
                 .foregroundStyle(RN.Palette.muted)
         case .signInForLink:
             EmptyView()
+        }
+    }
+
+    /// The words with no song yet: lenses and visibility travel with them; moods and
+    /// genres wait for the song.
+    private var writeFirstForm: some View {
+        VStack(alignment: .leading, spacing: RN.Space.l) {
+            CaptureNoteField(note: note, focus: $focus, isFocused: focus == .note)
+            CaptureChipGroup(
+                title: "What kind of thought is this?",
+                items: MusicLens.allCases,
+                label: \.rawValue,
+                isSelected: { lenses.contains($0) },
+                toggle: toggleLens
+            )
+            Toggle(isOn: $isPublic) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(VisibilityCopy.publicLabel)
+                    VisibilityNote(isPublic: isPublic)
+                        .font(.footnote)
+                        .foregroundStyle(RN.Palette.muted)
+                }
+            }
+            .tint(RN.Palette.rust)
         }
     }
 
@@ -479,6 +665,19 @@ struct CaptureSheet: View {
             }
             .padding(.horizontal, RN.Space.gutter)
             .padding(.vertical, RN.Space.m)
+        } else if writingFirst, display == .nothing || display == .identifyFailed {
+            Button {
+                saveWithoutSong()
+            } label: {
+                StableLabel(confirmation ?? "Save note", among: Self.primaryLabels)
+                    .font(.body.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.glassProminent)
+            .controlSize(.large)
+            .disabled(!note.hasText || confirmation != nil)
+            .padding(.horizontal, RN.Space.gutter)
+            .padding(.vertical, RN.Space.m)
         }
     }
 
@@ -574,7 +773,8 @@ struct CaptureSheet: View {
     // MARK: Writing
 
     private var hasUnsavedText: Bool {
-        confirmation == nil && note.hasText
+        // A note opened from Drafts is already kept; closing saves the changes.
+        confirmation == nil && note.hasText && writtenNote == nil
     }
 
     /// Selected moods plus a word still sitting in the "your own word" field.
@@ -589,7 +789,8 @@ struct CaptureSheet: View {
     /// may replace it, and pins once it answers.
     private func engage() {
         if flow == .identifyFailed, identifyFromTrack { flow = .idle }
-        if pinned == nil, !isCheckingSources, let current = nowPlaying.track {
+        if startedWritingAt == nil, note.hasText { startedWritingAt = Date() }
+        if pinned == nil, !isCheckingSources, !writingFirst, let current = nowPlaying.track {
             pinned = CapturePin(track: current, resolution: nowPlaying.resolution)
         }
         if frozen == nil {
@@ -609,7 +810,15 @@ struct CaptureSheet: View {
         let body = note.trimmed
         let chosenMoods = finalMoods
         var wroteEntry = false
-        if !body.isEmpty, model.isSignedIn {
+        if let writtenNote, model.isSignedIn {
+            // Written first: the entry is dated when the words were, and its draft goes.
+            if body.isEmpty {
+                model.drafts.delete(key: writtenNote.key)
+            } else {
+                model.saveWrittenNote(writtenNote, text: body, songId: song.id, lenses: lenses, isPublic: isPublic)
+                wroteEntry = true
+            }
+        } else if !body.isEmpty, model.isSignedIn {
             let now = ResonoteDate.now()
             let document = RichDocument.plain(body)
             model.save(JournalEntry(
@@ -676,6 +885,9 @@ struct CaptureSheet: View {
     @discardableResult
     private func keepWordsInDraft(subject: CaptureSubject) -> Bool {
         let drafts = model.drafts
+        if writingFirst, writtenNote != nil || subject.track == nil {
+            return keepNote(subject: subject, in: drafts)
+        }
         let target: String?
         if let song = subject.song {
             target = Draft.key(kind: .song, entityId: song.id, entryId: nil)
@@ -694,6 +906,39 @@ struct CaptureSheet: View {
         }
         autosaved = CaptureAutosave(key: target, text: words)
         return true
+    }
+
+    /// Keeps the words as a written-first note, with the song the person chose (or their
+    /// removing it). An automatic attachment stays automatic.
+    private func keepNote(subject: CaptureSubject, in drafts: DraftStore) -> Bool {
+        let noteId = writtenNote?.noteId ?? freshNoteId
+        let key = Draft.noteKey(noteId)
+        // An earlier autosave of this note is replaced below; one elsewhere is taken back.
+        if let previous = autosaved, previous.key != key { drafts.retract(previous.text, fromKey: previous.key) }
+        // Words cleared since this note's autosave: the note held only them, so it goes.
+        if let previous = autosaved, previous.key == key, writtenNote == nil, note.trimmed.isEmpty { drafts.delete(key: key) }
+        autosaved = nil
+        let chosen: NowPlayingTrack? = personChose ? subject.track : nil
+        let attachment: Draft.Attachment? = personChose && (chosen != nil || songDetached) ? .person : nil
+        guard drafts.saveNote(note.trimmed, lenses: lenses, isPublic: isPublic, writtenAt: startedWritingAt ?? Date(), noteId: noteId, track: chosen, attachment: attachment) != nil else { return false }
+        if writtenNote == nil { autosaved = CaptureAutosave(key: key, text: note.trimmed) }
+        return true
+    }
+
+    /// Saves the words with no song. The listen covering the moment they were begun
+    /// attaches when any source reports it.
+    private func saveWithoutSong() {
+        guard confirmation == nil, note.hasText else { return }
+        model.requireAuth {
+            guard keepNote(subject: subject, in: model.drafts) else { return }
+            // The note is saved for real, not an autosave to take back.
+            autosaved = nil
+            model.attachWrittenNotes(to: nowPlaying.recent.plays)
+            focus = nil
+            let message = "Saved for its song"
+            confirmation = message
+            AccessibilityNotification.Announcement("Saved. The song you were playing attaches when a source reports it.").post()
+        }
     }
 
     /// The app is leaving the foreground: keep the words safe in a draft.
@@ -771,6 +1016,11 @@ struct CaptureSheet: View {
 
     private func start() async {
         let external = router.consumeExternalCapture()
+        if let key = preset.noteKey {
+            await model.waitUntilRestored()
+            if let saved = model.drafts.load(key: key), saved.isWrittenFirst { open(note: saved) }
+            return
+        }
         if let link {
             await runLink(link)
         } else if startsListening {
@@ -778,10 +1028,23 @@ struct CaptureSheet: View {
         } else if preset.origin == Self.shortcutOrigin, nowPlaying.track?.source == .manual, let handed = nowPlaying.track {
             // A Shortcut named this song: keep it even if a source reports something else next.
             pin(to: handed)
-        } else if nowPlaying.track == nil {
-            await nowPlaying.refresh()
-        } else if external {
-            await checkSources()
+        } else {
+            if nowPlaying.track == nil {
+                await nowPlaying.refresh()
+            } else if external {
+                await checkSources()
+            }
+            // Something audible that no source can name: listen on its own only when the
+            // person turned that on in Settings (it opens the microphone).
+            if nowPlaying.autoIdentify, nowPlaying.suggestsIdentify, !Task.isCancelled {
+                await runIdentify()
+                if flow == .identifyFailed, nowPlaying.recent.preselected != nil {
+                    flow = .idle
+                    attachPreselected()
+                }
+            } else {
+                attachPreselected()
+            }
         }
     }
 
@@ -855,6 +1118,7 @@ struct CaptureSheet: View {
         }
         if let found {
             // Pin what Shazam heard, whatever another source reported while it listened.
+            personChose = true
             pin(to: found)
             flow = .idle
             AccessibilityNotification.Announcement("Found \(found.title)").post()
@@ -880,6 +1144,7 @@ struct CaptureSheet: View {
         }
         switch outcome {
         case .found(let found):
+            personChose = true
             pin(to: found)
             flow = .idle
         case .superseded:
@@ -900,6 +1165,7 @@ struct CaptureSheet: View {
         let resolution = CaptureMatch.same(nowPlaying.track, track) ? nowPlaying.resolution : nil
         pinned = CapturePin(track: track, resolution: resolution)
         genreChoices = [:]
+        songDetached = false
     }
 
     private func signIn() {

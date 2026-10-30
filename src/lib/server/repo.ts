@@ -76,6 +76,21 @@ function asRelation(value: unknown): RelationKind {
   return RELATIONS.includes(value as RelationKind) ? value as RelationKind : 'mentions';
 }
 
+/**
+ * Whether a written entry or collection is published. Only `published === true`
+ * publishes; the legacy `public` key is ignored, because builds that predate the
+ * flag sent `public: true` by default (docs/IOS_API.md, "Private first").
+ */
+export function isPublished(input: { published?: unknown }): boolean {
+  return input.published === true;
+}
+
+/** Both wire names for the stored flag, so builds that read only `public` stay right. */
+function visibility(row: Row): { public: boolean; published: boolean } {
+  const published = Boolean(row.is_public);
+  return { public: published, published };
+}
+
 // --- Row mappers (shapes mirror the previous Postgres adapter exactly) ---
 
 export function profileFromRow(row: Row): Profile {
@@ -125,7 +140,7 @@ export function entryFromRow(row: Row, references: MusicReference[]): JournalEnt
     didntWork: optStr(row.didnt_work),
     lenses: asLenses(row.lenses),
     references,
-    public: Boolean(row.is_public),
+    ...visibility(row),
     createdAt: str(row.created_at),
     updatedAt: str(row.updated_at),
   };
@@ -139,6 +154,26 @@ function listenFromRow(row: Row): ListenLog {
     moods: json<string[]>(row.moods, []),
     note: optStr(row.note),
     listenedAt: str(row.listened_at),
+  };
+}
+
+function collectionFromRow(row: Row, items: Row[]): Collection {
+  return {
+    id: str(row.id),
+    profileId: str(row.profile_id),
+    name: str(row.name),
+    slug: str(row.slug),
+    description: str(row.description),
+    ...visibility(row),
+    createdAt: str(row.created_at),
+    updatedAt: str(row.updated_at),
+    items: items.filter((item) => str(item.collection_id) === str(row.id)).map((item) => ({
+      id: str(item.id),
+      entityId: str(item.entity_id),
+      entityKind: asKind(item.entity_kind),
+      note: optStr(item.note),
+      position: num(item.position) ?? 0,
+    })),
   };
 }
 
@@ -261,37 +296,25 @@ export async function loadOwnBundle(userId: string): Promise<OwnBundle> {
     likes: likes.map(likeFromRow),
     entries,
     listens: listens.map(listenFromRow),
-    collections: collections.map((row) => ({
-      id: str(row.id),
-      profileId: str(row.profile_id),
-      name: str(row.name),
-      slug: str(row.slug),
-      description: str(row.description),
-      public: Boolean(row.is_public),
-      createdAt: str(row.created_at),
-      updatedAt: str(row.updated_at),
-      items: items.filter((item) => str(item.collection_id) === str(row.id)).map((item) => ({
-        id: str(item.id),
-        entityId: str(item.entity_id),
-        entityKind: asKind(item.entity_kind),
-        note: optStr(item.note),
-        position: num(item.position) ?? 0,
-      })),
-    })),
+    collections: collections.map((row) => collectionFromRow(row, items)),
     pins: pinList,
     genreAssertions: assertions.map(assertionFromRow),
     catalog,
   };
 }
 
-/** What any visitor may see about one person. Listening logs never leave here. */
+/**
+ * What any visitor (the owner included) may see about one person: the profile,
+ * published entries and collections, pins on entities and on published writing,
+ * and genre assertions. Likes and listens never leave here; they ship as empty
+ * arrays so older builds decode, and the catalog slice carries nothing only they needed.
+ */
 export async function loadPublicBundleByHandle(handle: string): Promise<ProfileBundle & { catalog: CatalogSlice }> {
   const normalizedHandle = handle.replace(/^@/, '').toLowerCase();
   const profileRow = await first<Row>('select * from profiles where handle = ?', normalizedHandle);
   if (!profileRow) throw new Error('Profile not found.');
   const profile = profileFromRow(profileRow);
-  const [likes, entries, collections, pins, assertions] = await Promise.all([
-    all<Row>('select * from likes where profile_id = ? order by created_at asc', profile.id),
+  const [entries, collections, pins, assertions] = await Promise.all([
     loadEntriesFor(profile.id, false),
     all<Row>('select * from collections where profile_id = ? and is_public = 1 order by created_at asc', profile.id),
     all<Row>('select * from profile_pins where profile_id = ?', profile.id),
@@ -311,30 +334,14 @@ export async function loadPublicBundleByHandle(handle: string): Promise<ProfileB
     (pin.targetType === 'collection' && visibleCollectionIds.has(pin.targetId)),
   );
 
-  const catalog = await collectReferencedCatalog(bundleReferences({ profile, likes, entries, items, assertions, pins: visiblePins }));
+  const catalog = await collectReferencedCatalog(bundleReferences({ profile, likes: [], entries, items, assertions, pins: visiblePins }));
 
   return {
     profile,
-    likes: likes.map(likeFromRow),
+    likes: [], // Private: what someone likes ships only to themselves.
     entries,
     listens: [], // Private by design: a person's listening timeline ships only to themselves.
-    collections: collections.map((row) => ({
-      id: str(row.id),
-      profileId: str(row.profile_id),
-      name: str(row.name),
-      slug: str(row.slug),
-      description: str(row.description),
-      public: true,
-      createdAt: str(row.created_at),
-      updatedAt: str(row.updated_at),
-      items: items.filter((item) => str(item.collection_id) === str(row.id)).map((item) => ({
-        id: str(item.id),
-        entityId: str(item.entity_id),
-        entityKind: asKind(item.entity_kind),
-        note: optStr(item.note),
-        position: num(item.position) ?? 0,
-      })),
-    })),
+    collections: collections.map((row) => collectionFromRow(row, items)),
     pins: visiblePins,
     genreAssertions: assertions.map(assertionFromRow),
     catalog,
@@ -532,7 +539,7 @@ export async function saveEntry(userId: string, entry: JournalEntry) {
          is_public = excluded.is_public, updated_at = excluded.updated_at`,
       entry.id || randomUUID(), userId, entry.entityId, entry.entityKind, entry.title ?? null,
       JSON.stringify(entry.document), entry.plainText, entry.worked ?? null, entry.didntWork ?? null,
-      JSON.stringify(entry.lenses), entry.public ? 1 : 0, createdAt, updatedAt,
+      JSON.stringify(entry.lenses), isPublished(entry) ? 1 : 0, createdAt, updatedAt,
     ),
     sql('delete from entry_references where entry_id = ?', entry.id),
     ...(entry.references ?? []).map((reference): Statement => sql(
@@ -594,7 +601,7 @@ export async function saveCollection(userId: string, collection: Collection) {
        on conflict(id) do update set name = excluded.name, slug = excluded.slug, description = excluded.description,
          is_public = excluded.is_public, updated_at = excluded.updated_at`,
       collection.id || randomUUID(), userId, collection.name, collection.slug, collection.description,
-      collection.public ? 1 : 0, collection.createdAt, collection.updatedAt,
+      isPublished(collection) ? 1 : 0, collection.createdAt, collection.updatedAt,
     ),
     sql('delete from collection_items where collection_id = ?', collection.id),
     ...(collection.items ?? []).map((item): Statement => sql(

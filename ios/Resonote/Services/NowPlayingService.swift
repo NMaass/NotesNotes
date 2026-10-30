@@ -1,3 +1,4 @@
+import AVFAudio
 import ResonoteKit
 import SwiftUI
 import UIKit
@@ -10,6 +11,11 @@ import UIKit
 /// 2. Last.fm / ListenBrainz through the backend (covers Spotify and anything that scrobbles);
 /// 3. Shazam, when the person asks it to listen;
 /// 4. shared or pasted links, and tracks handed over by a Shortcut.
+///
+/// Beside "now" it keeps `recent`: what played lately, newest first, merged from the
+/// backend's scrobble history, Apple Music's recently played and library play dates,
+/// Journaling Suggestions picks, and the current track (docs/IOS_NOW_PLAYING.md). History
+/// is the primary source; a live answer only promotes one row.
 ///
 /// The card never blanks while a refresh runs: the last known track stays until a
 /// different one replaces it. "Playing" is claimed only while a source vouches for it
@@ -45,6 +51,20 @@ final class NowPlayingService {
     /// A music link is on the clipboard (detected without reading it).
     private(set) var copiedLinkAvailable = false
     private(set) var appleMusicAccess: AppleMusicSource.Access
+    /// Recent plays across every source, ranked, with the likeliest pre-selected.
+    private(set) var recent = RecentPlayList()
+    /// App icons the Journaling Suggestions picker gave for picked plays, by `RecentPlay.matchKey`.
+    private(set) var journalingIcons: [String: URL] = [:]
+    /// Another app is making sound and it isn't the Music app (`AVAudioSession.isOtherAudioPlaying`).
+    private(set) var othersAudible = false
+    /// The person's Last.fm web-auth link.
+    let lastfm: LastfmLink
+
+    /// Starts Identify on its own when capture opens and nothing else can say what's
+    /// audible. Off by default: it opens the microphone.
+    var autoIdentify: Bool {
+        didSet { UserDefaults.standard.set(autoIdentify, forKey: Self.autoIdentifyKey) }
+    }
 
     var linkedSources: LinkedSources {
         didSet {
@@ -70,6 +90,14 @@ final class NowPlayingService {
     @ObservationIgnored private var pick = 0
     @ObservationIgnored private var lastWidgetWrite: (identity: String, isPlaying: Bool, at: Date)?
     @ObservationIgnored private var hasActivated = false
+    /// Recent plays from `GET /api/now-playing`, kept when a later request fails.
+    @ObservationIgnored private var remoteRecent: [RecentPlay] = []
+    @ObservationIgnored private var appleMusicRecent: [RecentPlay] = []
+    @ObservationIgnored private var lastHistoryLoad: Date?
+    /// Plays the person picked in the Journaling Suggestions sheet this launch.
+    @ObservationIgnored private var journalingPicks: [RecentPlay] = []
+    /// When each waiting note's history was last asked for, by draft key.
+    @ObservationIgnored private var historyLookups: [String: Date] = [:]
 
     /// How long a song the person chose stays put while other sources report something else.
     private static let pickHold: TimeInterval = 3 * 60
@@ -77,11 +105,23 @@ final class NowPlayingService {
     private static let sampleFreshFor: TimeInterval = 20
     /// The same song still playing is written to the widget at most this often.
     private static let widgetRefreshInterval: TimeInterval = 4 * 60
+    /// Apple Music history is asked for at most this often (it's a network request).
+    private static let historyFreshFor: TimeInterval = 60
+    private static let autoIdentifyKey = "auto-identify"
+    /// Rows in the recent-plays list.
+    private static let recentShown = 10
+    /// A note waiting longer than this for its song stops asking scrobble history.
+    private static let historyLookback: TimeInterval = 14 * 24 * 60 * 60
+    /// The same waiting note asks history again only after this long.
+    private static let historyRetry: TimeInterval = 15 * 60
+    private static let historyLookupsPerRefresh = 3
 
     init(model: AppModel) {
         self.model = model
         linkedSources = LinkedSources.load()
         appleMusicAccess = appleMusic.access
+        autoIdentify = UserDefaults.standard.bool(forKey: Self.autoIdentifyKey)
+        lastfm = LastfmLink(model: model)
         let snapshot = NowPlayingSnapshot.load()
         if let restored = snapshot.track, !restored.isStale() {
             track = restored
@@ -89,6 +129,9 @@ final class NowPlayingService {
             phase = resolution?.song != nil ? .ready : .unmatched
             isConfirmedPlaying = restored.claimsPlayback()
         }
+        lastfm.onChange = { [weak self] linked, username in self?.lastfmLinkChanged(linked: linked, username: username) }
+        model.onAccountChange = { [weak self] in self?.accountChanged() }
+        rankRecent()
     }
 
     var song: Song? { resolution?.song }
@@ -142,11 +185,15 @@ final class NowPlayingService {
         if track == nil { phase = .looking }
         var answered: Set<NowPlayingTrack.Source> = []
         var candidates: [NowPlayingTrack] = []
+        var musicAppPlaying = false
         if linkedSources.appleMusicEnabled {
             switch NowPlayingRefresher.sampleAppleMusic() {
-            case .track(let local):
+            case .track(let sampled):
+                // MusicKit's view of the same item adds the ISRC; a sample that lost it keeps the one known.
+                let local = NowPlayingRefresher.carryingIdentifiers(AppleMusicHistory.enriched(sampled), from: track)
                 answered.insert(.appleMusic)
                 candidates.append(local)
+                musicAppPlaying = local.isPlaying
                 if shouldTake(local) { take(local) }
             case .silent:
                 answered.insert(.appleMusic)
@@ -154,14 +201,29 @@ final class NowPlayingService {
                 break
             }
         }
+        othersAudible = AVAudioSession.sharedInstance().isOtherAudioPlaying && !musicAppPlaying
+        // Apple Music history runs beside the scrobble lookup, never ahead of "now".
+        let history = loadAppleMusicHistoryIfDue()
         // Remote sources need the session; at launch it may still be being read from disk.
         await model.waitUntilRestored()
-        if model.hasLiveSession, linkedSources.hasRemote,
-           let response = try? await model.api.remoteNowPlaying(lastfm: linkedSources.lastfmUser, listenbrainz: linkedSources.listenbrainzUser, resolve: false) {
-            answered.formUnion([.lastfm, .listenbrainz])
-            if let remote = response.track { candidates.append(remote) }
+        if model.hasLiveSession, linkedSources.hasRemote {
+            if let response = try? await model.api.remoteNowPlaying(lastfm: linkedSources.lastfmUser, listenbrainz: linkedSources.listenbrainzUser, resolve: false) {
+                answered.formUnion([.lastfm, .listenbrainz])
+                if let remote = response.track { candidates.append(remote) }
+                remoteRecent = response.recentPlays
+            }
+        } else {
+            remoteRecent = []
         }
-        guard !Task.isCancelled else { return }
+        if let history {
+            appleMusicRecent = await history.value
+        } else if !linkedSources.appleMusicEnabled {
+            appleMusicRecent = []
+        }
+        guard !Task.isCancelled else {
+            rankRecent()
+            return
+        }
         if let best = Self.best(of: candidates), shouldTake(best) {
             take(best)
         } else if let current = track, current.isPlaying, stopsClaiming(current, answered: answered) {
@@ -175,6 +237,8 @@ final class NowPlayingService {
             phase = .nothing
         }
         dropIfStale()
+        rankRecent()
+        Task { await lookUpWaitingNotes() }
     }
 
     /// Prefer what is actively playing, then the most recent report.
@@ -257,6 +321,7 @@ final class NowPlayingService {
     private func setTrack(_ newTrack: NowPlayingTrack?) {
         if track != newTrack { track = newTrack }
         updateClaim()
+        rankRecent()
     }
 
     /// The same song reported again: the widget needs a fresh time only now and then, or when play state changes.
@@ -515,6 +580,91 @@ final class NowPlayingService {
 
     func dismissCopiedLink() {
         copiedLinkAvailable = false
+    }
+
+    // MARK: Recent plays
+
+    /// Offer Identify prominently: something is audible, the Music app is silent, and no
+    /// source vouches for a song. History still carries the capture flow without it.
+    var suggestsIdentify: Bool {
+        othersAudible && !isConfirmedPlaying && !isIdentifying
+    }
+
+    /// Adds what the person picked in the Journaling Suggestions sheet; `icon` is the
+    /// playing app's, shown beside those rows.
+    func addJournalingPicks(_ plays: [RecentPlay], icon: URL?) {
+        guard !plays.isEmpty else { return }
+        journalingPicks = Array((plays + journalingPicks).prefix(AppleMusicHistory.limit))
+        if let icon {
+            for play in plays { journalingIcons[play.matchKey] = icon }
+        }
+        rankRecent()
+    }
+
+    /// Apple Music history, unless it was read a moment ago or the source is off.
+    private func loadAppleMusicHistoryIfDue() -> Task<[RecentPlay], Never>? {
+        guard linkedSources.appleMusicEnabled, appleMusicAccess == .granted else { return nil }
+        if let lastHistoryLoad, Date().timeIntervalSince(lastHistoryLoad) < Self.historyFreshFor { return nil }
+        lastHistoryLoad = Date()
+        return Task { await AppleMusicHistory.load() }
+    }
+
+    /// Ranks every report again. The current track is one more report: playing, it is the
+    /// one live row; otherwise just the newest thing heard.
+    private func rankRecent() {
+        var reports = remoteRecent + appleMusicRecent + journalingPicks
+        // A song chosen by search is a pick, not something that played.
+        if let track, track.source != .manual { reports.insert(RecentPlay(track: track), at: 0) }
+        // Every report is ranked so a note can attach to any of them; the list shows the newest.
+        let every = RecentPlayList.rank(reports, limit: .max)
+        let ranked = RecentPlayList(plays: Array(every.plays.prefix(Self.recentShown)), preselected: every.preselected)
+        guard ranked != recent else { return }
+        recent = ranked
+        // A listen that arrived after a note was written may be the song it was about.
+        model.attachWrittenNotes(to: every.plays)
+    }
+
+    /// Write first, attach later for notes older than the newest scrobbles reach: asks
+    /// for the history before each waiting note's moment (`before=`), newest notes first,
+    /// a few per refresh, and each note again only after `historyRetry`.
+    private func lookUpWaitingNotes() async {
+        // A short list is all the history there is; a full one may stop short of a note.
+        guard model.isSignedIn, model.hasLiveSession, linkedSources.hasRemote, remoteRecent.count >= Self.recentShown,
+              let reach = remoteRecent.compactMap(\.playedAt).min() else { return }
+        let sources = linkedSources
+        let now = Date()
+        let due = model.drafts.notes().filter { note in
+            guard note.isWaitingForSong, note.attachment != .person, let writtenAt = note.writtenAt else { return false }
+            guard writtenAt < reach, now.timeIntervalSince(writtenAt) < Self.historyLookback else { return false }
+            return historyLookups[note.key].map { now.timeIntervalSince($0) >= Self.historyRetry } ?? true
+        }
+        for note in due.prefix(Self.historyLookupsPerRefresh) {
+            guard let writtenAt = note.writtenAt else { continue }
+            historyLookups[note.key] = now
+            // Plays that started by the note's moment, give or take the minute's grace.
+            guard let response = try? await model.api.remoteNowPlaying(lastfm: sources.lastfmUser, listenbrainz: sources.listenbrainzUser, resolve: false, before: writtenAt.addingTimeInterval(60)),
+                  !Task.isCancelled else { return }
+            model.attachWrittenNotes(to: response.recentPlays)
+        }
+    }
+
+    /// Someone signed out, or someone else signed in: the previous person's Last.fm link
+    /// leaves this phone (a typed username comes back), and the new person's is read.
+    private func accountChanged() {
+        lastfm.reset()
+        historyLookups = [:]
+        remoteRecent = []
+        lastfmLinkChanged(linked: false, username: nil)
+        rankRecent()
+        Task { await lastfm.load() }
+    }
+
+    private func lastfmLinkChanged(linked: Bool, username: String?) {
+        // The linked account goes; a username typed before web auth comes back.
+        let sources = linkedSources.withLastfmLink(linked, username: username)
+        guard sources != linkedSources else { return }
+        linkedSources = sources
+        scheduleRefresh(force: true)
     }
 
     // MARK: Internals

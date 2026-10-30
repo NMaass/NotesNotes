@@ -80,12 +80,16 @@ public struct CapturePreset: Hashable, Sendable, Codable {
     public var genreId: String?
     /// Where the capture began, for copy like "From your widget" and analytics-free debugging.
     public var origin: String?
+    /// Opens a written-first note (`Draft.noteKey`) to save it, or change or detach its
+    /// song. In-app only: never part of a deep link.
+    public var noteKey: String?
 
-    public init(lens: MusicLens? = nil, mood: String? = nil, genreId: String? = nil, origin: String? = nil) {
+    public init(lens: MusicLens? = nil, mood: String? = nil, genreId: String? = nil, origin: String? = nil, noteKey: String? = nil) {
         self.lens = lens
         self.mood = mood
         self.genreId = genreId
         self.origin = origin
+        self.noteKey = noteKey
     }
 
     init(query: [String: String]) {

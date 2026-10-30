@@ -25,7 +25,9 @@ nonisolated enum NowPlayingRefresher {
 
         if sources.appleMusicEnabled {
             switch await sampleAppleMusic() {
-            case .track(let track):
+            case .track(let sampled):
+                // The app may have added an ISRC from MusicKit; the same song keeps it here.
+                let track = carryingIdentifiers(sampled, from: before.track)
                 candidates.append(Candidate(track: track, resolution: nil))
                 answered.insert(.appleMusic)
             case .silent:
@@ -141,6 +143,19 @@ nonisolated enum NowPlayingRefresher {
         }
         found?.track = track
         return found
+    }
+
+    /// `new` with identifiers an earlier report of the same song had and `new` lacks, so
+    /// a Music app sample that comes without the ISRC (the widget can't ask MusicKit)
+    /// keeps the song's identity instead of reading as a different song.
+    static func carryingIdentifiers(_ new: NowPlayingTrack, from current: NowPlayingTrack?) -> NowPlayingTrack {
+        guard let current, new.isrc == nil, current.isrc != nil,
+              TrackText.matchKey(artist: new.artist, title: new.title) == TrackText.matchKey(artist: current.artist, title: current.title) else { return new }
+        var track = new
+        track.isrc = current.isrc
+        track.appleMusicId = track.appleMusicId ?? current.appleMusicId
+        track.artworkURL = track.artworkURL ?? current.artworkURL
+        return track
     }
 
     // MARK: Music app

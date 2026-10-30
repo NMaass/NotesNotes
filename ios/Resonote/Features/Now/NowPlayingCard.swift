@@ -165,11 +165,13 @@ struct NowPlayingCard: View {
     /// note a song copied from another app. One fixed-height row in every state.
     private var otherSongRow: some View {
         HStack(spacing: RN.Space.m) {
+            // Another app is audible and nothing vouches for this song: say so, louder.
             Button {
                 router.present(.identify)
             } label: {
-                Label("Not this song? Identify", systemImage: "waveform")
-                    .font(.subheadline.weight(.medium))
+                Label(nowPlaying.suggestsIdentify ? "Something else playing? Identify" : "Not this song? Identify", systemImage: "waveform")
+                    .font(.subheadline.weight(nowPlaying.suggestsIdentify ? .semibold : .medium))
+                    .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.accentColor)
             }
             .buttonStyle(.borderless)
             .disabled(nowPlaying.isIdentifying)

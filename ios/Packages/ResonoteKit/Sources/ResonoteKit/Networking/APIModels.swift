@@ -240,10 +240,97 @@ public struct ResolveResponse: Codable, Sendable, Hashable {
 }
 
 /// new: `GET /api/now-playing?lastfm=&listenbrainz=&resolve=1` — the freshest
-/// track across the person's linked scrobbling accounts, optionally resolved.
+/// track across the person's linked scrobbling accounts, optionally resolved, and
+/// their recent plays.
 public struct RemoteNowPlayingResponse: Decodable, Sendable {
+    /// One scrobbling service the server asked, and whether it answered.
+    public struct ServiceStatus: Decodable, Sendable, Hashable {
+        public enum Status: String, Decodable, Sendable { case ok, unavailable, notConfigured = "not-configured" }
+
+        public var service: String
+        public var status: Status
+    }
+
+    /// Something playing now, or a play that finished within the last 10 minutes.
     public var track: NowPlayingTrack?
     public var resolution: ResolveResponse?
+    /// Newest first, at most 10, deduplicated across services. At most one row (the
+    /// first) has `isPlaying`; the others' `observedAt` is when they were played.
+    /// Empty from servers that predate the list.
+    public var recent: [NowPlayingTrack]
+    public var services: [ServiceStatus]
+
+    public init(track: NowPlayingTrack? = nil, resolution: ResolveResponse? = nil, recent: [NowPlayingTrack] = [], services: [ServiceStatus] = []) {
+        self.track = track
+        self.resolution = resolution
+        self.recent = recent
+        self.services = services
+    }
+
+    private enum CodingKeys: String, CodingKey { case track, resolution, recent, services }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        track = try c.decodeIfPresent(NowPlayingTrack.self, forKey: .track)
+        resolution = try? c.decodeIfPresent(ResolveResponse.self, forKey: .resolution)
+        recent = try c.decodeLossyArray(NowPlayingTrack.self, forKey: .recent)
+        services = try c.decodeLossyArray(ServiceStatus.self, forKey: .services)
+    }
+
+    /// `recent` as recent plays, with `track` first when an older server sent no list.
+    public var recentPlays: [RecentPlay] {
+        let list = recent.isEmpty ? [track].compactMap(\.self) : recent
+        return list.map(RecentPlay.init(track:))
+    }
+}
+
+/// new: a Last.fm account linked through Last.fm web auth. The server keeps the
+/// session key; the phone only ever sees the username.
+public struct LastfmAccount: Codable, Sendable, Hashable {
+    public var username: String
+    /// ISO-8601.
+    public var linkedAt: String
+
+    public init(username: String, linkedAt: String) {
+        self.username = username
+        self.linkedAt = linkedAt
+    }
+}
+
+/// new: `GET /api/account/lastfm`.
+public struct LastfmAccountResponse: Decodable, Sendable {
+    /// Whether this server can run Last.fm web auth (it holds an API key and shared secret).
+    public var configured: Bool
+    public var account: LastfmAccount?
+
+    private enum CodingKeys: String, CodingKey { case configured, account }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        configured = try c.decodeIfPresent(Bool.self, forKey: .configured) ?? false
+        account = try? c.decodeIfPresent(LastfmAccount.self, forKey: .account)
+    }
+}
+
+/// new: `GET /api/account/lastfm/auth-url` — where to send the person to approve Resonote.
+public struct LastfmAuthURLResponse: Decodable, Sendable {
+    /// `https://www.last.fm/api/auth/?api_key=…&cb=resonote%3A%2F%2Flastfm-auth`
+    public var url: URL
+    /// The scheme Last.fm redirects back to (`resonote`), for `ASWebAuthenticationSession`.
+    public var callbackScheme: String
+
+    private enum CodingKeys: String, CodingKey { case url, callbackScheme }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(URL.self, forKey: .url)
+        callbackScheme = try c.decodeIfPresent(String.self, forKey: .callbackScheme) ?? LastfmAuth.callbackScheme
+    }
+}
+
+/// new: `POST /api/account/lastfm/session` — the account the token linked.
+public struct LastfmLinkResponse: Decodable, Sendable {
+    public var account: LastfmAccount
 }
 
 /// Writes accepted by `POST /api/sync`. The server trusts only the bearer token's

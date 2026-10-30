@@ -104,6 +104,10 @@ targets:
         # The App Group doubles as the keychain access group for the session token.
         com.apple.security.application-groups:
           - $(RESONOTE_APP_GROUP)
+        # Journaling Suggestions: the system picker's recent media (Spotify, YouTube Music, podcasts)
+        # for the capture sheet's "Recently played" row. Self-service; no Info.plist key needed.
+        com.apple.developer.journal.allow:
+          - suggestions
 
   ResonoteWidgets:
     type: app-extension

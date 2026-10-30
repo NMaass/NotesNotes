@@ -2,7 +2,7 @@ import ResonoteKit
 import SwiftUI
 
 /// One collection: its name and reason, then its music in order. The owner can
-/// rename it, change who sees it, reorder and remove items, or delete it.
+/// rename it, publish it or make it private, reorder and remove items, or delete it.
 struct CollectionView: View {
     let handle: String
     let collectionId: String
@@ -135,8 +135,8 @@ struct CollectionView: View {
                     Text(JournalCopy.count(count, "piece of music", "pieces of music"))
                         .font(.subheadline.monospacedDigit())
                         .foregroundStyle(RN.Palette.muted)
-                    if isOwner, !collection.isPublic {
-                        Label("Only you can see this", systemImage: "lock")
+                    if isOwner {
+                        VisibilityMarker(isPublic: collection.isPublic)
                             .font(.caption)
                             .foregroundStyle(RN.Palette.muted)
                     }
@@ -211,6 +211,12 @@ struct CollectionView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button("Edit details", systemImage: "pencil") { router.present(.editCollection(id: collectionId)) }
+                        // The end state is decided from what the person sees now, so the last tap wins.
+                        if ownCollection.isPublic {
+                            Button(VisibilityCopy.unpublishLabel, systemImage: "lock") { model.setPublished(collectionId: collectionId, false) }
+                        } else {
+                            Button(VisibilityCopy.publicLabel, systemImage: "globe") { model.setPublished(collectionId: collectionId, true) }
+                        }
                         Button("Reorder", systemImage: "arrow.up.arrow.down") { withAnimation { editMode = .active } }
                             .disabled(ownCollection.items.count < 2)
                         Divider()

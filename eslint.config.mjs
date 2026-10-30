@@ -1,6 +1,6 @@
 import nextConfig from 'eslint-config-next';
 const config = [
   ...nextConfig,
-  { ignores: ['.next/**', '.open-next/**', 'coverage/**', '.audit/**'] }
+  { ignores: ['.next/**', '.open-next/**', 'coverage/**', '.audit/**', '.claude/**'] }
 ];
 export default config;

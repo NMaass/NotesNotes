@@ -50,7 +50,7 @@ final class ShareModel {
     var lenses: [MusicLens] = []
     var moods: [String] = []
     var genreIds: [String] = []
-    var isPublic = true
+    var isPublic = false
 
     private(set) var isSaving = false
     private(set) var didSave = false

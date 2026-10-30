@@ -2,14 +2,14 @@ import ResonoteKit
 import SwiftUI
 
 /// The Now tab: what's playing and an invitation to write about it, unfinished
-/// drafts, and recent public observations from everyone.
+/// drafts, then the person's own recent listening and notes. Writing others published
+/// is one row away (`Route.feed`), never the home screen.
 struct NowView: View {
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
     @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var feed = NowFeed()
     @State private var drafts: [NowDraftRow] = []
     @State private var hasReadDrafts = false
     @State private var draftReads = 0
@@ -25,7 +25,9 @@ struct NowView: View {
                     NowDraftsSection(drafts: drafts)
                         .padding(.top, RN.Space.s)
                 }
-                NowFeedSection(feed: feed)
+                NowOwnSections()
+                NowFeedLink()
+                    .padding(.top, RN.Space.s)
             }
             .padding(.horizontal, RN.Space.gutter)
             .padding(.bottom, RN.Space.xxl)
@@ -45,7 +47,6 @@ struct NowView: View {
                 drafts = Self.draftRows(NowDrafts.read(limit: Self.draftLimit, from: model.drafts), catalog: model.catalog)
             }
         }
-        .task { await feed.appear(model: model) }
         .task(id: draftReads) {
             guard draftReads > 0 else { return }
             await reloadDrafts()
@@ -59,6 +60,8 @@ struct NowView: View {
         }
         // Drafts belong to whoever is signed in.
         .onChange(of: model.ownerId) { _, _ in draftReads += 1 }
+        // A note written first found its song.
+        .onChange(of: model.writtenNotesAttached) { _, _ in draftReads += 1 }
     }
 
     private var header: some View {
@@ -74,8 +77,8 @@ struct NowView: View {
 
     private func refreshAll() async {
         async let playing: Void = nowPlaying.refresh()
-        async let writing: Void = feed.reload(model: model)
-        _ = await (playing, writing)
+        async let own: Void = model.refreshSession()
+        _ = await (playing, own)
         await reloadDrafts()
     }
 
@@ -117,6 +120,9 @@ struct NowDraftRow: Identifiable, Equatable {
     let entryId: String?
     /// Words about a song not matched yet: opening it matches the song first.
     let unmatchedTrack: NowPlayingTrack?
+    /// A note written before its song was known: it opens in capture, to save it or
+    /// change its song.
+    let noteKey: String?
     let name: String
     let preview: String
     let artworkURL: String?
@@ -134,11 +140,19 @@ struct NowDraftRow: Identifiable, Equatable {
         entityId = draft.entityId
         entryId = draft.entryId
         unmatchedTrack = draft.isUnmatched ? draft.track : nil
-        name = entity?.name ?? draft.track?.title ?? (title.isEmpty ? "\(draft.entityKind.label) draft" : title)
+        noteKey = draft.isWrittenFirst ? draft.key : nil
+        let fallbackName = draft.isWaitingForSong ? "Waiting for its song" : (title.isEmpty ? "\(draft.entityKind.label) draft" : title)
+        name = entity?.name ?? draft.track?.title ?? fallbackName
         preview = firstLine.isEmpty ? (title.isEmpty ? "No words yet" : title) : firstLine
         artworkURL = entity.flatMap { catalog.artworkURL(for: $0) } ?? draft.track?.artworkURL
         let age = NowRelativeTime.phrase(since: draft.updatedAt, now: now)
-        if draft.isUnmatched {
+        if draft.isWrittenFirst {
+            if draft.isWaitingForSong {
+                edited = "Written \(NowRelativeTime.phrase(since: draft.writtenAt ?? draft.updatedAt, now: now))"
+            } else {
+                edited = draft.attachment == .automatic ? "Attached automatically · change" : age
+            }
+        } else if draft.isUnmatched {
             edited = "Not matched yet · \(age)"
         } else {
             edited = draft.entryId == nil ? age : "Editing · \(age)"
@@ -175,7 +189,9 @@ private struct NowDraftsSection: View {
     }
 
     private func open(_ row: NowDraftRow) {
-        if let track = row.unmatchedTrack {
+        if let noteKey = row.noteKey {
+            router.present(.capture(CapturePreset(origin: "note", noteKey: noteKey)))
+        } else if let track = row.unmatchedTrack {
             // Match the song first; once it is, the words join that song's draft.
             nowPlaying.present(track)
             router.present(.capture(CapturePreset(origin: "draft")))
@@ -213,141 +229,221 @@ private struct NowDraftRowView: View {
     }
 }
 
-// MARK: - Feed
+// MARK: - Your listening and notes
 
-/// "Recent observations": its children sit directly in the page's lazy stack, so
-/// cards are built only as they scroll into view.
-private struct NowFeedSection: View {
-    let feed: NowFeed
+/// The owner's newest logged listens and entries, derived once per data change.
+private struct NowOwnDigest {
+    struct Input: Equatable {
+        var entries: [JournalEntry]
+        var listens: [ListenLog]
+        var ownerId: String
+    }
+
+    let listens: [ListenLog]
+    let entries: [JournalEntry]
+    let hasMoreEntries: Bool
+    let refs: [CatalogRef]
+
+    static let listenLimit = 5
+    static let entryLimit = 3
+
+    init(_ input: Input) {
+        listens = Array(JournalOrder.listenDays(input.listens).flatMap(\.listens).prefix(Self.listenLimit))
+        let own = JournalOrder.newestFirst(input.entries.filter { $0.profileId == input.ownerId || $0.profileId.isEmpty })
+        entries = Array(own.prefix(Self.entryLimit))
+        hasMoreEntries = own.count > Self.entryLimit
+        refs = listens.map { CatalogRef(kind: .song, id: $0.songId) }
+            + entries.map { CatalogRef(kind: $0.entityKind, id: $0.entityId) }
+    }
+}
+
+/// "Your listening" and "Your notes". Signed out, one invitation stands in for both;
+/// while the cached session is still being read, nothing shows, so nothing flashes.
+private struct NowOwnSections: View {
+    @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
+    @State private var memo = JournalMemo<NowOwnDigest.Input, NowOwnDigest>()
+    @State private var unavailable: Set<String> = []
+
+    var body: some View {
+        if let bundle = model.bundle {
+            let digest = memo.value(for: NowOwnDigest.Input(entries: bundle.entries, listens: bundle.listens, ownerId: bundle.profile.id), NowOwnDigest.init)
+            Group {
+                listening(digest)
+                notes(digest)
+            }
+            .loadsMissingCatalog(digest.refs, unavailable: $unavailable)
+        } else if !model.isRestoringSession {
+            EmptyStateView(
+                title: "Your listening and notes live here",
+                message: "Sign in to keep what you hear and what you write. Everything starts private.",
+                actionTitle: "Continue with email",
+                action: { model.requireAuth {} }
+            )
+            .padding(.top, RN.Space.l)
+        }
+    }
+
+    @ViewBuilder
+    private func listening(_ digest: NowOwnDigest) -> some View {
+        SectionHeader(eyebrow: "Only you see this", title: "Your listening")
+            .padding(.top, RN.Space.l)
+        if digest.listens.isEmpty {
+            NowQuietNote(text: "Listens you log appear here. Note what's playing above, or use Log listen on a song's page.")
+        } else {
+            VStack(spacing: 0) {
+                ForEach(digest.listens) { listen in
+                    NowListenRow(listen: listen, isUnavailable: unavailable.contains(listen.songId))
+                    if listen.id != digest.listens.last?.id {
+                        Divider().overlay(RN.Palette.line)
+                    }
+                }
+            }
+            .padding(.horizontal, RN.Space.l)
+            .cardSurface()
+        }
+    }
+
+    @ViewBuilder
+    private func notes(_ digest: NowOwnDigest) -> some View {
+        HStack(alignment: .lastTextBaseline) {
+            SectionHeader(eyebrow: "Your writing", title: "Recent notes")
+            if digest.hasMoreEntries {
+                Button("See all") { router.tab = .journal }
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(RN.Palette.rustText)
+                    .accessibilityHint("Opens your journal")
+            }
+        }
+        .padding(.top, RN.Space.l)
+        if digest.entries.isEmpty {
+            NowQuietNote(text: "Nothing written yet. What you write stays private until you choose to publish it.")
+        } else {
+            ForEach(digest.entries) { entry in
+                let entity = model.catalog.entity(kind: entry.entityKind, id: entry.entityId)
+                EntryCard(
+                    entry: entry,
+                    author: nil,
+                    entity: entity,
+                    artworkURL: entity.flatMap { model.catalog.artworkURL(for: $0) },
+                    onOpen: { router.push(.entry(id: entry.id)) }
+                )
+            }
+        }
+    }
+}
+
+/// One logged listen, compact: the song, its moods or note, and when.
+private struct NowListenRow: View {
+    let listen: ListenLog
+    let isUnavailable: Bool
 
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
 
-    private static let skeletonCount = 3
-
     var body: some View {
-        HStack(alignment: .lastTextBaseline) {
-            SectionHeader(eyebrow: "Recent observations", title: "Writing, not scoring")
-            // New writing waits here, in the header's own line, instead of pushing cards down.
-            if feed.newCount > 0 {
-                Button(feed.newCount == 1 ? "1 new" : "\(feed.newCount) new") {
-                    feed.showNew()
-                }
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(RN.Palette.rustText)
-                .accessibilityHint("Shows the newest writing at the top")
+        if let song = model.catalog.songs[listen.songId] {
+            Button {
+                router.push(.entity(kind: .song, id: song.id))
+            } label: {
+                content(song)
             }
-        }
-        .padding(.top, RN.Space.l)
-
-        let entries = feed.entries.filter { !model.isBlocked($0.profileId) }
-        if entries.isEmpty {
-            switch feed.status {
-            case .idle, .loading:
-                ForEach(0..<Self.skeletonCount, id: \.self) { index in
-                    NowEntrySkeleton(announces: index == 0)
-                }
-            case .failed:
-                NowFeedErrorRow {
-                    Task { await feed.reload(model: model) }
-                }
-            case .loaded:
-                EmptyStateView(
-                    title: "The first observation can be yours.",
-                    message: "Note what's playing above, or find a song in Search, then write what you noticed without assigning it a score."
-                )
-            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Opens the song")
         } else {
-            let lastId = entries.last?.id
-            ForEach(entries) { entry in
-                card(for: entry)
-                    .onAppear {
-                        guard entry.id == lastId else { return }
-                        Task { await feed.loadMore(model: model) }
-                    }
-            }
-            if feed.nextCursor != nil {
-                footer
-            }
+            CatalogRowPlaceholder(artworkSize: 40, isUnavailable: isUnavailable)
+                .padding(.vertical, RN.Space.m)
         }
     }
 
-    private func card(for entry: JournalEntry) -> some View {
-        let entity = model.catalog.entity(kind: entry.entityKind, id: entry.entityId)
-        return EntryCard(
-            entry: entry,
-            author: model.author(of: entry),
-            entity: entity,
-            artworkURL: entity.flatMap { model.catalog.artworkURL(for: $0) },
-            onOpen: { router.push(.entry(id: entry.id)) }
-        )
-    }
-
-    /// Reserved height whether it is loading, failed, or waiting for the last card.
-    private var footer: some View {
-        ZStack {
-            ProgressView()
-                .nowStateLayer(visible: feed.isLoadingMore)
-            HStack(spacing: RN.Space.s) {
-                Text("More writing didn't load.")
+    private func content(_ song: Song) -> some View {
+        let entity = CatalogEntity.song(song)
+        return HStack(spacing: RN.Space.m) {
+            ArtworkView(model.catalog.artworkURL(for: entity), title: song.name, size: 40)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(song.name)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(RN.Palette.ink)
+                    .lineLimit(1)
+                Text(detail(entity))
+                    .font(.subheadline)
                     .foregroundStyle(RN.Palette.muted)
-                Button("Retry") {
-                    Task { await feed.loadMore(model: model) }
-                }
-                .fontWeight(.semibold)
-                .foregroundStyle(RN.Palette.rustText)
+                    .lineLimit(1)
             }
-            .font(.footnote)
-            .nowStateLayer(visible: feed.loadMoreFailed && !feed.isLoadingMore)
+            Spacer(minLength: RN.Space.s)
+            if let date = ResonoteDate.parse(listen.listenedAt) {
+                Text(NowRelativeTime.phrase(since: date, now: .now))
+                    .font(.caption)
+                    .foregroundStyle(RN.Palette.muted)
+                    .lineLimit(1)
+            }
         }
-        .frame(maxWidth: .infinity, minHeight: 44)
+        .padding(.vertical, RN.Space.m)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The note, else the moods, else "Artist · Album".
+    private func detail(_ entity: CatalogEntity) -> String {
+        if let note = listen.note?.trimmingCharacters(in: .whitespacesAndNewlines), !note.isEmpty { return note }
+        if !listen.moods.isEmpty { return listen.moods.joined(separator: " · ") }
+        return model.catalog.subtitle(for: entity)
     }
 }
 
-/// An entry card shape with stand-in text, redacted, so the feed's geometry is set before it loads.
-private struct NowEntrySkeleton: View {
-    let announces: Bool
-
-    private static let entry = JournalEntry(
-        id: "skeleton",
-        profileId: "",
-        entityId: "",
-        entityKind: .song,
-        document: .plain("A few lines about a song, long enough to fill the card the way a real observation does once it arrives, with room for a second thought."),
-        plainText: "",
-        lenses: [.feeling, .production],
-        createdAt: "",
-        updatedAt: ""
-    )
-    private static let author = Profile(id: "", handle: "listener", displayName: "Listener")
-    private static let entity = CatalogEntity.song(Song(id: "", name: "Song title", slug: "", artistId: ""))
+/// A muted line in a card where a section has nothing yet.
+private struct NowQuietNote: View {
+    let text: String
 
     var body: some View {
-        EntryCard(entry: Self.entry, author: Self.author, entity: Self.entity)
-            .redacted(reason: .placeholder)
-            .allowsHitTesting(false)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Loading recent writing")
-            .accessibilityHidden(!announces)
+        Text(text)
+            .font(.subheadline)
+            .foregroundStyle(RN.Palette.muted)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(RN.Space.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardSurface()
     }
 }
 
-/// A quiet row in place of the feed when its first page can't load.
-private struct NowFeedErrorRow: View {
-    let retry: () -> Void
+// MARK: - Published by others
+
+/// The way to the feed: a row the person chooses to open, below their own things.
+private struct NowFeedLink: View {
+    @Environment(Router.self) private var router
 
     var body: some View {
-        HStack(spacing: RN.Space.m) {
-            Text("Recent writing didn't load.")
-                .font(.subheadline)
-                .foregroundStyle(RN.Palette.muted)
-            Spacer(minLength: 0)
-            Button("Retry", action: retry)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(RN.Palette.rustText)
+        Button {
+            router.push(.feed)
+        } label: {
+            HStack(spacing: RN.Space.m) {
+                Image(systemName: "text.book.closed")
+                    .font(.title3)
+                    .foregroundStyle(RN.Palette.rustText)
+                    .frame(width: 40, height: 40)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Published by others")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(RN.Palette.ink)
+                    Text("Read what people chose to publish, newest first.")
+                        .font(.subheadline)
+                        .foregroundStyle(RN.Palette.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(RN.Palette.muted)
+                    .accessibilityHidden(true)
+            }
+            .padding(RN.Space.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .cardSurface()
+            .contentShape(RoundedRectangle(cornerRadius: RN.Radius.card))
         }
-        .padding(RN.Space.l)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
+        .buttonStyle(.plain)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 }
