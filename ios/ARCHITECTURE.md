@@ -29,9 +29,19 @@ becomes active, when an App Intent runs, when the widget reloads:
 2. **Apple Music history** — `AppleMusicHistory` (`Resonote/Services/`): MusicKit's
    recently played songs (undated) and library songs by `lastPlayedDate`, 10 of each,
    loaded at most once a minute.
-3. **Last.fm / ListenBrainz** — the backend's `GET /api/now-playing` returns `track` and a
-   `recent` list of up to 10 plays from the person's scrobbling accounts. Spotify scrobbles
-   to both, so this covers Spotify without Spotify's 5-user Development Mode cap. Last.fm
+3. **Spotify / Last.fm / ListenBrainz** — the backend's `GET /api/now-playing` returns
+   `track` and a `recent` list of up to 10 plays from the person's linked accounts (rows
+   from different services merge, so a Spotify play and its scrobble are one row;
+   `services` reports each, decoded leniently so an unknown service never breaks it).
+   Spotify is linked by **Sign in with Spotify** (`SpotifyLink`, Authorization Code with
+   PKCE: `SpotifyAuth` in ResonoteKit makes the verifier, S256 challenge, and state; the
+   app opens `GET /api/account/spotify/auth-url` in `webAuthenticationSession`, checks the
+   state on `resonote://spotify-auth?code=…&state=…`, and the server exchanges the code
+   with its client secret and keeps the tokens). `LinkedSources.spotifyLinked` makes the
+   app and the widget ask for now-playing with only Spotify linked. Spotify's app is in
+   Development Mode, so only accounts on its allowlist can sign in (the server answers
+   403 for others); everyone else gets Spotify through Last.fm or ListenBrainz, which
+   Spotify scrobbles to. Last.fm
    is linked by web auth (`LastfmLink`, SwiftUI's `webAuthenticationSession`, callback
    `resonote://lastfm-auth`, `LastfmAuth` in ResonoteKit); a typed username remains only
    when the server has no Last.fm keys or one was already saved.
@@ -46,13 +56,46 @@ becomes active, when an App Intent runs, when the widget reloads:
 6. **Links** — the share extension and a paste row accept Spotify, Apple Music, and
    YouTube Music links; the backend resolves them.
 
-`NowPlayingService` (`Resonote/Services/`) owns this. Every source normalizes into
+`NowPlayingService` (`Resonote/Services/`) owns this, and the `LastfmLink`,
+`SpotifyLink`, and `PlaybackService` it holds. A sign-out or a different person signing
+in (`AppModel.onAccountChange`) forgets both links on this phone and reads the new
+person's. Every source normalizes into
 `NowPlayingTrack` or `RecentPlay`; `RecentPlayList.rank` (ResonoteKit) merges reports of
 the same play, keeps only the newest playing row live, orders the rest newest first
 (undated last), and pre-selects the playing row or else the newest play within 12 hours.
 The capture sheet attaches the pre-selected play when nothing is playing and shows the
 next few as chips. `POST /api/music/resolve` maps a track to a catalog `Song` (importing
 from MusicBrainz when needed) and returns `TagSuggestions` (genres, lenses, moods, prompt).
+
+## Playback
+
+A **Play** button sits on a song's page (`PlayRow` in `EntityHeader`), beside the capture
+sheet's song, and on the now-playing card (`PlayIconButton`; their messages use the host's
+status line). Playback starts only from that tap, never on its own. `PlaybackService`
+(`Resonote/Services/`) tries, in order:
+
+1. **Spotify Connect** — Spotify linked, `canPlay` (Premium), and a Spotify id:
+   `POST /api/playback/spotify`. On `no-device` it opens `spotify:track:<id>` with
+   `UIApplication.open`, waits about two seconds, and plays once more on the active
+   smartphone, else the only smartphone, else the active device (`SpotifyDevice.target`;
+   never an arbitrary idle device, and with none it says "Spotify is open. Tap play
+   there."). Resonote is in the background by then, so the retry runs inside a
+   `beginBackgroundTask` whose expiration cancels it, and it is dropped if it would fire
+   more than 10 s after the tap, so a late resume never replaces what is playing.
+   When the Spotify app isn't installed, the web player
+   (`https://open.spotify.com/track/<id>`) opens and there is no retry.
+   `premium-required` and `not-linked` fall through to the next way.
+2. **Apple Music** — MusicKit authorized: the catalog song by ISRC, then Apple Music id,
+   then a title + artist search (first match), queued alone on `SystemMusicPlayer.shared`
+   and played (skipped on Mac Catalyst, where that player doesn't exist).
+3. **A link** — Spotify, Apple Music, then YouTube Music (`PlaybackTarget.bestLink`).
+
+Anything that fails becomes one short message for that song, which clears after a few
+seconds; nothing crashes or retries on its own.
+
+**No Spotify iOS SDK.** It is a binary framework that can't be built or verified in this
+project without Xcode, and the `spotify:` deep link plus Connect through the Web API
+already wake the Spotify app and play the song. The app never holds a Spotify token.
 
 ## The Now tab
 

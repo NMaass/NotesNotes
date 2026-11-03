@@ -339,11 +339,13 @@ What the caller is playing and recently played, across their scrobbling accounts
 
 **Accounts.** Last.fm: the account linked through web auth (see Linked accounts) when
 there is one, else the `lastfm` parameter. ListenBrainz: the `listenbrainz` parameter.
-Neither → 400 `Link a Last.fm or ListenBrainz username first.` Last.fm names must start
+Spotify: the account linked through Sign in with Spotify (see Linked accounts: Spotify),
+with no parameter. None of the three → 400 `Link a Last.fm or ListenBrainz username first.`
+(a linked Spotify account alone is enough). Last.fm names must start
 with a letter (`[A-Za-z0-9_-]`, ≤ 64). ListenBrainz (MusicBrainz) names may contain any
 printable character, including `@` and spaces, except `/`; control and format
 characters, surrounding whitespace, and the names `.` and `..` are refused (≤ 64). The
-name is percent-encoded into the API path. Both services are asked concurrently with a
+name is percent-encoded into the API path. The services are asked concurrently with a
 4 s timeout each.
 
 - Last.fm `user.getRecentTracks` (`limit=10`) with the server-held `LASTFM_API_KEY`;
@@ -353,28 +355,45 @@ name is percent-encoded into the API path. Both services are asked concurrently 
   last.fm), the public profile is read unsigned instead and the stale link is deleted,
   so `GET /api/account/lastfm` reports it unlinked and the app offers to sign in again.
 - ListenBrainz `playing-now` and `listens?count=10`.
+- Spotify `GET /v1/me/player/currently-playing` and `GET /v1/me/player/recently-played?limit=10`,
+  with the linked account's access token (refreshed first when it expires within a minute).
+  Currently-playing counts only when Spotify answers 200 with `currently_playing_type: "track"`
+  and an item (204, episodes and ads are nothing); `is_playing` is `isPlaying`. A playing
+  item is observed at the sample time; a paused one at the response's `timestamp` (when
+  playback last changed), and it is left out when that is missing or more than 10 minutes
+  old (Spotify keeps reporting a track paused hours ago). A paused item that recently-played
+  already lists within 10 minutes (same `spotifyId` or `TrackText` key) is that play and is
+  dropped. Each row has `source: "spotify"`,
+  `artist` (every artist, joined with ", "), `album`, `durationMs`, `isrc`
+  (`external_ids.isrc`), `spotifyId`, `url` (`external_urls.spotify`) and `artworkURL` (the
+  largest album image). A 429 or 5xx is status `unavailable`. When Spotify refuses the refresh
+  token (`invalid_grant`: access removed at spotify.com) the link is deleted and Spotify
+  counts as unlinked for that request (no `services` entry). Status `not-configured` when the
+  server has no Spotify client id/secret.
 
 **`before`** (optional, ISO-8601): history instead of now. `recent` holds up to 10 plays
 that started before that moment, newest first (Last.fm `to=`, ListenBrainz
-`listens?max_ts=`, no playing rows), and `track` is `null`. Write first, attach later
+`listens?max_ts=`, Spotify `recently-played?before=<epoch ms>` without currently-playing,
+no playing rows), and `track` is `null`. Write first, attach later
 uses it for a waiting note older than the newest 10 plays reach. An unreadable value →
 400 `before must be an ISO-8601 time.`
 
 **`track`** (unchanged): the actively playing track, else the freshest play that finished
 within the last 10 minutes (`isPlaying: false`), else `null`.
 
-**`recent`**: up to 10 plays, newest first, merged across both services and **not**
+**`recent`**: up to 10 plays, newest first, merged across the services and **not**
 limited to 10 minutes. Each is a `NowPlayingTrack` whose `observedAt` is when it was
-played (Last.fm `date.uts`, ListenBrainz `listened_at`) or, for the playing row, when the
+played (Last.fm `date.uts`, ListenBrainz `listened_at`, Spotify `played_at`) or, for the playing row, when the
 service was sampled.
 
 - At most one row has `isPlaying: true`, and it is first: a live source promotes one row.
-  When both services report something playing, the one sampled most recently wins and the
+  When two services report something playing, the one sampled most recently wins and the
   other is dropped if it is the same song, else kept as an ordinary row.
 - Two rows from different services are the same play when their `TrackText` keys
   (normalized artist + title, `src/lib/music/text.ts`) or ISRCs match and they are both
   playing or less than 10 minutes apart. One service never reports a play twice, so
-  repeat listens of a song from one service stay separate rows. The kept row is the playing one, else the newer; it takes identifiers
+  repeat listens of a song from one service stay separate rows. A Spotify play and its
+  Last.fm scrobble are reports from different services, so they merge. The kept row is the playing one, else the newer; it takes identifiers
   (`mbid`, `isrc`, provider ids, `artworkURL`, `album`, `durationMs`) only the other had.
 - A service that answers with nothing contributes nothing; `recent` is `[]` when nothing
   answered.
@@ -386,7 +405,7 @@ under a second), adopt the track, and resolve it separately with the time left.
 
 ```ts
 { ok: true, track: NowPlayingTrack | null, recent: NowPlayingTrack[], resolution?: ResolveResponse,
-  services: Array<{ service: 'lastfm'|'listenbrainz', status: 'ok'|'unavailable'|'not-configured' }> }
+  services: Array<{ service: 'lastfm'|'listenbrainz'|'spotify', status: 'ok'|'unavailable'|'not-configured' }> }
 ```
 
 ```json
@@ -428,6 +447,59 @@ The app opens `url` in `ASWebAuthenticationSession` with `callbackScheme`; Last.
 redirects to `resonote://lastfm-auth?token=<token>` (`LastfmAuth.token(fromCallback:)`).
 `DELETE /api/account` also deletes `linked_accounts` rows. `GET /api/now-playing`
 uses the link as described above.
+
+## Linked accounts: Spotify (requires auth)
+
+Sign in with Spotify uses Authorization Code with PKCE. The app makes the code verifier
+and state and keeps them; the server holds `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`,
+exchanges the code, refreshes tokens, and stores them in `spotify_accounts`. **Tokens never
+leave the server.** Each route answers 401 when signed out, 503 without D1, and 501
+`Spotify sign-in is not set up on this server.` when the client id or secret is unset (except
+`GET /api/account/spotify`, which reports `configured: false`). The redirect URI is
+`SPOTIFY_REDIRECT_URI`, default `resonote://spotify-auth`. Spotify's Development Mode lets
+only allowlisted accounts sign in.
+
+| Request | Behavior |
+| --- | --- |
+| `GET /api/account/spotify` | `{ ok: true, configured: boolean, account: { id, displayName, product, canPlay, linkedAt } \| null }`. `id` is the Spotify user id; `product` is `premium`, `free`, … from `GET /v1/me`; `canPlay` is `product === 'premium'`. |
+| `GET /api/account/spotify/auth-url?code_challenge=&state=` | `code_challenge`: the S256 challenge (base64url, 43–128 characters); `state`: 16–128 of `[A-Za-z0-9_-]`; otherwise 400. `{ ok: true, url, callbackScheme: "resonote", redirectUri }` where `url` is `https://accounts.spotify.com/authorize?response_type=code&client_id=…&scope=…&redirect_uri=…&code_challenge_method=S256&code_challenge=…&state=…` and the scope is `user-read-recently-played user-read-currently-playing user-read-playback-state user-modify-playback-state`. |
+| `POST /api/account/spotify/session` `{ code, codeVerifier }` | `codeVerifier` is 43–128 RFC 7636 characters and `code` URL-safe, else 400 `That is not a Spotify sign-in.` The server POSTs `https://accounts.spotify.com/api/token` (`grant_type=authorization_code`, `code`, `redirect_uri`, `code_verifier`; Basic auth `client_id:client_secret`), then reads `GET /v1/me` (id, display_name, product) and upserts the caller's row (relinking replaces it). `{ ok: true, account }` as above. Spotify answering `invalid_grant` → 400 `Spotify did not accept that sign-in. Try again.`; `/v1/me` answering 403 (not on the allowlist) → 403 `This Spotify account isn't on Resonote's allowlist yet.`; anything else → 502. |
+| `DELETE /api/account/spotify` | Deletes the caller's Spotify link (Spotify has no revoke endpoint; it is not called). `{ ok: true }`; idempotent. |
+
+**Token refresh.** Before any Spotify call the server refreshes an access token that is
+missing or expires within 60 s (`grant_type=refresh_token`, Basic auth), storing the new
+access token, its expiry, and the new refresh token when Spotify rotates it (the write is
+keyed on the old refresh token, so a relink made meanwhile is kept). Spotify answering
+`invalid_grant` is also what a request sees when a concurrent one (poll, widget, play) has
+just rotated the token, so the server reads the row again, and once more after 750 ms if
+it still holds the refused token. A different refresh token there means someone else
+refreshed or relinked: its access token is used when fresh, else the new refresh token is
+tried once. Only when the stored refresh token is still the refused one is the row
+deleted (guarded on that token) and the account read as unlinked.
+
+The app opens `url` in `ASWebAuthenticationSession` with `callbackScheme`; Spotify
+redirects to `resonote://spotify-auth?code=<code>&state=<state>` (or `?error=`), and the app
+checks `state` before posting the code (`SpotifyAuth.code(fromCallback:expectedState:)`).
+`DELETE /api/account` also deletes the `spotify_accounts` row. `GET /api/now-playing`
+uses the link as described above.
+
+## Playback: Spotify Connect (requires auth)
+
+Plays on one of the caller's Spotify Connect devices through the Web API; Spotify requires
+Premium. 401 signed out, 503 without D1, 501 when Spotify sign-in is not set up. Errors the
+app acts on carry a code in `error` and a sentence in `message`:
+
+| Status | Body |
+| --- | --- |
+| 409 | `{ ok: false, error: 'not-linked', message: 'Sign in with Spotify first.' }` (also when the refresh token was just refused) |
+| 409 | `{ ok: false, error: 'no-device', message: 'Open Spotify on a device first.' }` (Spotify 404 `NO_ACTIVE_DEVICE`, or a device id that is gone) |
+| 403 | `{ ok: false, error: 'premium-required', message: 'Playing through Spotify needs Spotify Premium.' }` (Spotify 403: Premium required or a playback restriction) |
+| 502 | `{ ok: false, error: string }` for anything else from Spotify |
+
+| Request | Behavior |
+| --- | --- |
+| `GET /api/playback/spotify/devices` | `GET /v1/me/player/devices` → `{ ok: true, devices: [{ id, name, type, isActive, volumePercent }] }` (`volumePercent` may be `null`; devices without an id are left out). |
+| `POST /api/playback/spotify` `{ action: 'play'\|'pause'\|'next'\|'previous', spotifyId?, deviceId? }` | `spotifyId` is a 22-character track id (used only by `play`); `deviceId` targets a device (`?device_id=`), else the active one. Anything else → 400 `That is not a playback request.` `play` with `spotifyId` → `PUT /v1/me/player/play` `{ uris: ['spotify:track:<id>'] }`; `play` without it resumes; `pause` → `PUT /v1/me/player/pause`; `next` / `previous` → `POST /v1/me/player/next` / `previous`. `{ ok: true }` on any 2xx. |
 
 ## Genres
 
@@ -471,6 +543,25 @@ create table if not exists linked_accounts (
 
 In `d1/schema.sql`, `journal_entries.is_public` and `collections.is_public` default to `0`.
 
+### Spotify
+
+`d1/migrations/0006_spotify.sql` (mirrored in `d1/schema.sql`). Additive and idempotent.
+Reads treat a database without the table as "not linked".
+
+```sql
+create table if not exists spotify_accounts (
+  profile_id text primary key references profiles(id) on delete cascade,
+  spotify_user_id text not null,
+  display_name text,
+  product text,                 -- 'premium' | 'free' | ... from GET /v1/me
+  scope text not null,
+  refresh_token text not null,
+  access_token text,
+  access_expires_at text,       -- ISO-8601
+  linked_at text not null default (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+```
+
 ### Entry timestamps
 
 `d1/migrations/0004_entry_timestamps.sql` (mirrored in `d1/schema.sql`) brings rows written
@@ -487,7 +578,7 @@ when signed out and 503 without D1.
 
 | Request | Behavior |
 | --- | --- |
-| `DELETE /api/account` | Deletes the caller's entries (and their references), listens, likes, collections (and items), pins (and other people's pins of their entries and collections), genre assertions, reports and blocks, linked accounts, profile, every session, sign-in codes, and user row, in one D1 batch. `{ ok: true }`; also clears a web session cookie. |
+| `DELETE /api/account` | Deletes the caller's entries (and their references), listens, likes, collections (and items), pins (and other people's pins of their entries and collections), genre assertions, reports and blocks, linked accounts (Last.fm and Spotify, with its tokens), profile, every session, sign-in codes, and user row, in one D1 batch. `{ ok: true }`; also clears a web session cookie. |
 | `POST /api/moderation/reports` `{ targetType: 'entry'\|'profile', targetId, reason: 'spam'\|'harassment'\|'hate'\|'sexual'\|'other' }` | Stores a report for review; reporting the same target again keeps one row (the newest reason). 400 for anything else. |
 | `GET /api/moderation/blocks` | `{ ok: true, profiles: Profile[] }`, the people the caller blocked. Clients hide their writing in the feed, on entity pages, on their profile, and on entry pages. |
 | `POST /api/moderation/blocks` `{ profileId }` | Blocks; idempotent. 400 for yourself. |

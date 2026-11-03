@@ -289,7 +289,10 @@ struct CaptureSheet: View {
     private func header(subject: CaptureSubject, display: Display) -> some View {
         switch display {
         case .track:
-            CaptureHeader(art: .artwork(subject.artworkURL), title: subject.track?.title ?? "", subtitle: byline(for: subject), track: subject.track)
+            HStack(alignment: .center, spacing: RN.Space.s) {
+                CaptureHeader(art: .artwork(subject.artworkURL), title: subject.track?.title ?? "", subtitle: byline(for: subject), track: subject.track)
+                PlayIconButton(target: playTarget(for: subject))
+            }
         case .looking:
             CaptureHeader(art: .symbol("music.note"), title: "Song title", subtitle: "Artist · Album", track: nil, isPlaceholder: true)
         case .listening:
@@ -309,6 +312,15 @@ struct CaptureSheet: View {
         case .nothing:
             CaptureHeader(art: .symbol("music.note"), title: "Nothing playing that Resonote can see.", subtitle: "Identify it, paste a link, or search.", track: nil)
         }
+    }
+
+    /// The selected song, as something Play can start.
+    private func playTarget(for subject: CaptureSubject) -> PlaybackTarget? {
+        guard let track = subject.track else { return nil }
+        if let song = subject.song {
+            return PlaybackTarget(song: song, artistName: model.catalog.artists[song.artistId]?.name, track: track)
+        }
+        return PlaybackTarget(track: track)
     }
 
     /// "Written 5 min ago. …": when the note is from, and what happens next.
@@ -348,6 +360,10 @@ struct CaptureSheet: View {
         case .nothing, .signInForLink:
             text = nil
         case .track:
+            if let message = nowPlaying.playback.message(for: playTarget(for: subject)) {
+                text = message
+                break
+            }
             if isCheckingSources {
                 text = "Checking your sources…"
                 break

@@ -35,10 +35,12 @@ Landed 2026-10-29.
 - Write first, attach later: a note saved with no song keeps its time and attaches the recent play covering it. The person can change or remove the song before saving it from Drafts.
 - Identify is offered prominently when other audio is playing and no source names it; Settings → Identify on its own starts it without a tap (off by default).
 - Last.fm web auth (`/api/account/lastfm/*`, `LASTFM_SHARED_SECRET`) replaces the typed username when the server is configured. Settings links to the Spotify connection pages of Last.fm and ListenBrainz.
+- Sign in with Spotify (`/api/account/spotify/*`, PKCE, tokens on the Worker in `spotify_accounts`, migration 0006) adds Spotify's currently playing and recently played to `recent` for accounts on the Spotify app's allowlist. Play buttons (entity header, now-playing card, capture sheet) play through Spotify Connect, then Apple Music via MusicKit, then open a link. Landed 2026-11-03.
 - Settings explains how to build the Shazam → Note a Song shortcut and put it on the Action button or a personal automation.
 
 What remains:
 
+- Register `resonote://spotify-auth` as a redirect URI on the Spotify app, apply migration 0006, and try sign-in, the allowlist message, and the no-device path (open Spotify, then play) on a device.
 - Publish the Shazam → Note a Song shortcut from a device and put its iCloud link in `ShazamShortcut.link` (`SettingsView.swift`); until then Settings shows build steps instead of a link.
 - Only the 10 most recent plays are checked, so a note written earlier than that waits for the server-side listening timeline (item 4).
 - A written-first note stays a draft until the person saves it from Drafts.

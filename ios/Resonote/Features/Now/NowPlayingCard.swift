@@ -14,6 +14,7 @@ struct NowPlayingCard: View {
     private enum Mode: Equatable { case track, looking, nothing }
 
     private static let vinylSize: CGFloat = 104
+    private static let playSize: CGFloat = 40
     private static let chipLimit = 6
 
     private var mode: Mode {
@@ -63,13 +64,19 @@ struct NowPlayingCard: View {
                     }
                 }
                 .redacted(reason: mode == .looking ? .placeholder : [])
+                .padding(.trailing, Self.playSize + RN.Space.s)
                 .nowStateLayer(visible: mode != .nothing, accessible: mode == .track)
+
+                // Play sits at the title's trailing edge, in the same slot in every state.
+                PlayIconButton(target: playTarget, size: Self.playSize)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .nowStateLayer(visible: mode == .track)
 
                 VStack(alignment: .leading, spacing: RN.Space.xs) {
                     Text("Nothing playing that Resonote can see.")
                         .font(RN.Typography.headline)
                         .foregroundStyle(RN.Palette.ink)
-                    Text("Play something in Apple Music, connect Last.fm, or let Resonote listen.")
+                    Text("Play something in Apple Music, connect Spotify or Last.fm, or let Resonote listen.")
                         .font(.subheadline)
                         .foregroundStyle(RN.Palette.muted)
                 }
@@ -85,14 +92,18 @@ struct NowPlayingCard: View {
 
     private func statusLine(mode: Mode) -> some View {
         let status = NowMatchStatus(phase: nowPlaying.phase, resolution: nowPlaying.resolution, isSignedIn: model.hasLiveSession, isRestoring: model.isRestoringSession)
+        let playbackMessage = mode == .track ? nowPlaying.playback.message(for: playTarget) : nil
         let text: String? = switch mode {
-        case .track: status?.text
+        case .track: playbackMessage ?? status?.text
         case .looking: "Checking your sources…"
         case .nothing: nil
         }
         let action: (() -> Void)?
         let actionTitle: String?
         switch (mode, status) {
+        case (.track, _) where playbackMessage != nil:
+            actionTitle = nil
+            action = nil
         case (.track, .couldNotMatch?):
             actionTitle = "Retry"
             action = { Task { await nowPlaying.resolveCurrent() } }
@@ -119,6 +130,16 @@ struct NowPlayingCard: View {
         guard nowPlaying.track != nil, nowPlaying.song == nil,
               let candidates = nowPlaying.resolution?.candidates, !candidates.isEmpty else { return nil }
         return candidates
+    }
+
+    /// The song shown, as something Play can start: the catalog song when matched, with
+    /// the track's ISRC and links, else the track itself.
+    private var playTarget: PlaybackTarget? {
+        guard let track = nowPlaying.track else { return nil }
+        if let song = nowPlaying.song {
+            return PlaybackTarget(song: song, artistName: model.catalog.artists[song.artistId]?.name, track: track)
+        }
+        return PlaybackTarget(track: track)
     }
 
     // MARK: With a track

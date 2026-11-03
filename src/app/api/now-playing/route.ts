@@ -5,13 +5,15 @@ import { isValidLastfmUser, isValidListenBrainzUser } from '@/lib/music/scrobble
 import { currentUser } from '@/lib/server/auth';
 import { getDb } from '@/lib/server/db';
 import { deleteRevokedLastfm, linkedLastfm } from '@/lib/server/lastfm';
+import { linkedSpotify } from '@/lib/server/spotify';
 
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
 /**
  * What the caller is playing (`track`) and recently played (`recent`) across
- * their Last.fm / ListenBrainz accounts. A Last.fm account linked through web
+ * their Last.fm / ListenBrainz / Spotify accounts. A linked Spotify account joins
+ * on its own (no parameter); a Last.fm account linked through web
  * auth takes the place of the `lastfm` parameter; when Last.fm refuses its
  * session key, the public profile is read instead and the stale link is dropped.
  * With `resolve=1` the /api/music/resolve result for `track` rides along, so a
@@ -24,10 +26,10 @@ export async function GET(request: NextRequest) {
   if (!userId) return NextResponse.json({ ok: false, error: 'Sign in to see what you are playing.' }, { status: 401 });
 
   const params = request.nextUrl.searchParams;
-  const linked = await linkedLastfm(userId).catch(() => null);
+  const [linked, spotify] = await Promise.all([linkedLastfm(userId).catch(() => null), linkedSpotify(userId).catch(() => null)]);
   const lastfmParam = linked ? undefined : params.get('lastfm')?.trim() || undefined;
   const listenbrainz = params.get('listenbrainz')?.trim() || undefined;
-  if (!linked && !lastfmParam && !listenbrainz) {
+  if (!linked && !spotify && !lastfmParam && !listenbrainz) {
     return NextResponse.json({ ok: false, error: 'Link a Last.fm or ListenBrainz username first.' }, { status: 400 });
   }
   if (lastfmParam && !isValidLastfmUser(lastfmParam)) return NextResponse.json({ ok: false, error: 'That is not a Last.fm username.' }, { status: 400 });
@@ -40,7 +42,10 @@ export async function GET(request: NextRequest) {
     : lastfmParam ? { user: lastfmParam } : undefined;
 
   try {
-    const { track, recent, services, lastfmSessionRevoked } = await lookupNowPlaying({ lastfm, listenbrainz }, { before });
+    const { track, recent, services, lastfmSessionRevoked } = await lookupNowPlaying(
+      { lastfm, listenbrainz, spotify: spotify ? { profileId: userId, account: spotify } : undefined },
+      { before },
+    );
     // Access revoked on last.fm: forget the link, so GET /api/account/lastfm says
     // unlinked and the app offers to sign in again.
     if (lastfmSessionRevoked && linked) await deleteRevokedLastfm(userId, linked.sessionKey).catch(() => undefined);

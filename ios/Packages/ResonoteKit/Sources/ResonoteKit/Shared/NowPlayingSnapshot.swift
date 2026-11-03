@@ -62,17 +62,21 @@ public struct LinkedSources: Codable, Sendable, Hashable {
     /// A username typed before web auth, set aside while a linked account replaces it
     /// in `lastfmUser`; unlinking (or signing out) puts it back.
     public var lastfmTypedUser: String?
+    /// The server holds a Spotify sign-in (Authorization Code + PKCE), so
+    /// `GET /api/now-playing` reads Spotify's recently played and currently playing.
+    public var spotifyLinked: Bool
 
-    public init(lastfmUser: String? = nil, listenbrainzUser: String? = nil, appleMusicEnabled: Bool = false, spotifyConnected: Bool = false, lastfmLinked: Bool = false, lastfmTypedUser: String? = nil) {
+    public init(lastfmUser: String? = nil, listenbrainzUser: String? = nil, appleMusicEnabled: Bool = false, spotifyConnected: Bool = false, lastfmLinked: Bool = false, lastfmTypedUser: String? = nil, spotifyLinked: Bool = false) {
         self.lastfmUser = lastfmUser
         self.listenbrainzUser = listenbrainzUser
         self.appleMusicEnabled = appleMusicEnabled
         self.spotifyConnected = spotifyConnected
         self.lastfmLinked = lastfmLinked
         self.lastfmTypedUser = lastfmTypedUser
+        self.spotifyLinked = spotifyLinked
     }
 
-    private enum CodingKeys: String, CodingKey { case lastfmUser, listenbrainzUser, appleMusicEnabled, spotifyConnected, lastfmLinked, lastfmTypedUser }
+    private enum CodingKeys: String, CodingKey { case lastfmUser, listenbrainzUser, appleMusicEnabled, spotifyConnected, lastfmLinked, lastfmTypedUser, spotifyLinked }
 
     public init(from decoder: any Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -82,6 +86,7 @@ public struct LinkedSources: Codable, Sendable, Hashable {
         spotifyConnected = try c.decodeIfPresent(Bool.self, forKey: .spotifyConnected) ?? false
         lastfmLinked = try c.decodeIfPresent(Bool.self, forKey: .lastfmLinked) ?? false
         lastfmTypedUser = try c.decodeIfPresent(String.self, forKey: .lastfmTypedUser)
+        spotifyLinked = (try? c.decodeIfPresent(Bool.self, forKey: .spotifyLinked)) ?? false
     }
 
     /// The Last.fm link changed: a linked account's username stands in for a typed one
@@ -100,7 +105,7 @@ public struct LinkedSources: Codable, Sendable, Hashable {
     }
 
     public var hasRemote: Bool {
-        lastfmLinked || !(lastfmUser ?? "").isEmpty || !(listenbrainzUser ?? "").isEmpty
+        lastfmLinked || spotifyLinked || !(lastfmUser ?? "").isEmpty || !(listenbrainzUser ?? "").isEmpty
     }
 
     public static func load() -> LinkedSources {

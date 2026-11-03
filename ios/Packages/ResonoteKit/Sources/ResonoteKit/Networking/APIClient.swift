@@ -92,6 +92,48 @@ public struct APIClient: Sendable {
         let _: OKResponse = try await send("DELETE", "/api/account/lastfm")
     }
 
+    /// new: whether Spotify sign-in is available here, and the linked account if any.
+    public func spotifyAccount() async throws -> SpotifyAccountResponse {
+        try await send("GET", "/api/account/spotify")
+    }
+
+    /// new: Spotify's authorize page for a PKCE challenge (`SpotifyAuth.challenge(for:)`)
+    /// and a state. It redirects to `resonote://spotify-auth?code=…&state=…`; check the
+    /// state with `SpotifyAuth.code(fromCallback:expectedState:)`, then `linkSpotify`.
+    public func spotifyAuthURL(codeChallenge: String, state: String) async throws -> SpotifyAuthURLResponse {
+        try await send("GET", "/api/account/spotify/auth-url", query: ["code_challenge": codeChallenge, "state": state])
+    }
+
+    /// new: the server exchanges the code (with the verifier and its client secret) and
+    /// keeps the tokens. A code works once; a refused one (400) needs a new sign-in, and a
+    /// 403 means the account isn't on the app's Spotify allowlist.
+    public func linkSpotify(code: String, codeVerifier: String) async throws -> SpotifyAccount {
+        let response: SpotifyLinkResponse = try await send("POST", "/api/account/spotify/session", body: ["code": code, "codeVerifier": codeVerifier])
+        return response.account
+    }
+
+    /// new: forgets the linked Spotify account and its tokens. Idempotent.
+    public func unlinkSpotify() async throws {
+        let _: OKResponse = try await send("DELETE", "/api/account/spotify")
+    }
+
+    /// new: the person's Spotify Connect devices.
+    public func spotifyDevices() async throws -> [SpotifyDevice] {
+        let response: SpotifyDevicesResponse = try await send("GET", "/api/playback/spotify/devices")
+        return response.devices
+    }
+
+    /// new: plays (a track, or resumes), pauses, or skips on the person's Spotify. Throws
+    /// `SpotifyPlaybackError` for no device, no Premium, or no linked account.
+    public func spotifyPlayback(_ action: SpotifyPlaybackAction, spotifyId: String? = nil, deviceId: String? = nil) async throws {
+        do {
+            let _: OKResponse = try await send("POST", "/api/playback/spotify", body: SpotifyPlaybackRequest(action: action, spotifyId: spotifyId, deviceId: deviceId))
+        } catch APIError.server(let status, let code) {
+            if let typed = SpotifyPlaybackError(code: code) { throw typed }
+            throw APIError.server(status: status, message: code)
+        }
+    }
+
     // MARK: Safety
 
     /// new: tells Resonote that an entry or a profile breaks the rules.

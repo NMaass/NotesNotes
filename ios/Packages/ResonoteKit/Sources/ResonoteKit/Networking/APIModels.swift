@@ -247,8 +247,52 @@ public struct RemoteNowPlayingResponse: Decodable, Sendable {
     public struct ServiceStatus: Decodable, Sendable, Hashable {
         public enum Status: String, Decodable, Sendable { case ok, unavailable, notConfigured = "not-configured" }
 
-        public var service: String
+        /// The service asked. One this version doesn't know decodes as `.other`, so a
+        /// newer server never breaks the list.
+        public enum Service: Decodable, Sendable, Hashable {
+            case lastfm, listenbrainz, spotify
+            case other(String)
+
+            public init(rawValue: String) {
+                switch rawValue {
+                case "lastfm": self = .lastfm
+                case "listenbrainz": self = .listenbrainz
+                case "spotify": self = .spotify
+                default: self = .other(rawValue)
+                }
+            }
+
+            public var rawValue: String {
+                switch self {
+                case .lastfm: "lastfm"
+                case .listenbrainz: "listenbrainz"
+                case .spotify: "spotify"
+                case .other(let value): value
+                }
+            }
+
+            /// The `NowPlayingTrack` source this service's rows carry.
+            public var trackSource: NowPlayingTrack.Source? {
+                switch self {
+                case .lastfm: .lastfm
+                case .listenbrainz: .listenbrainz
+                case .spotify: .spotify
+                case .other: nil
+                }
+            }
+
+            public init(from decoder: any Decoder) throws {
+                self.init(rawValue: try decoder.singleValueContainer().decode(String.self))
+            }
+        }
+
+        public var service: Service
         public var status: Status
+
+        public init(service: Service, status: Status) {
+            self.service = service
+            self.status = status
+        }
     }
 
     /// Something playing now, or a play that finished within the last 10 minutes.
@@ -275,6 +319,16 @@ public struct RemoteNowPlayingResponse: Decodable, Sendable {
         resolution = try? c.decodeIfPresent(ResolveResponse.self, forKey: .resolution)
         recent = try c.decodeLossyArray(NowPlayingTrack.self, forKey: .recent)
         services = try c.decodeLossyArray(ServiceStatus.self, forKey: .services)
+    }
+
+    /// The live sources that answered, so a song one of them stopped reporting stops
+    /// claiming playback. Last.fm and ListenBrainz count as answered whenever the request
+    /// succeeds (as before `services` existed); Spotify only when it said `ok`, so a
+    /// throttled Spotify never ends a play it is still reporting.
+    public var answeredSources: Set<NowPlayingTrack.Source> {
+        var answered: Set<NowPlayingTrack.Source> = [.lastfm, .listenbrainz]
+        if services.contains(where: { $0.service == .spotify && $0.status == .ok }) { answered.insert(.spotify) }
+        return answered
     }
 
     /// `recent` as recent plays, with `track` first when an older server sent no list.
@@ -331,6 +385,189 @@ public struct LastfmAuthURLResponse: Decodable, Sendable {
 /// new: `POST /api/account/lastfm/session` — the account the token linked.
 public struct LastfmLinkResponse: Decodable, Sendable {
     public var account: LastfmAccount
+}
+
+/// new: a Spotify account linked through Spotify sign-in (Authorization Code + PKCE). The
+/// server keeps the tokens; the phone sees who it is and whether it can play.
+public struct SpotifyAccount: Codable, Sendable, Hashable {
+    /// The Spotify user id.
+    public var id: String
+    public var displayName: String?
+    /// `premium`, `free`, … from Spotify's `GET /v1/me`.
+    public var product: String?
+    /// Spotify Premium: playback through Spotify Connect works.
+    public var canPlay: Bool
+    /// ISO-8601.
+    public var linkedAt: String
+
+    public init(id: String, displayName: String? = nil, product: String? = nil, canPlay: Bool = false, linkedAt: String) {
+        self.id = id
+        self.displayName = displayName
+        self.product = product
+        self.canPlay = canPlay
+        self.linkedAt = linkedAt
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, displayName, product, canPlay, linkedAt }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        product = try c.decodeIfPresent(String.self, forKey: .product)
+        canPlay = try c.decodeIfPresent(Bool.self, forKey: .canPlay) ?? (product == "premium")
+        linkedAt = try c.decodeIfPresent(String.self, forKey: .linkedAt) ?? ""
+    }
+
+    /// The name to show: the display name, else the Spotify user id.
+    public var name: String {
+        if let displayName, !displayName.trimmingCharacters(in: .whitespaces).isEmpty { return displayName }
+        return id
+    }
+}
+
+/// new: `GET /api/account/spotify`.
+public struct SpotifyAccountResponse: Decodable, Sendable {
+    /// Whether this server can run Spotify sign-in (it holds a client id and secret).
+    public var configured: Bool
+    public var account: SpotifyAccount?
+
+    private enum CodingKeys: String, CodingKey { case configured, account }
+
+    public init(configured: Bool, account: SpotifyAccount?) {
+        self.configured = configured
+        self.account = account
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        configured = try c.decodeIfPresent(Bool.self, forKey: .configured) ?? false
+        account = try? c.decodeIfPresent(SpotifyAccount.self, forKey: .account)
+    }
+}
+
+/// new: `GET /api/account/spotify/auth-url?code_challenge=&state=` — Spotify's authorize page.
+public struct SpotifyAuthURLResponse: Decodable, Sendable {
+    /// `https://accounts.spotify.com/authorize?response_type=code&…&code_challenge_method=S256&…`
+    public var url: URL
+    /// The scheme Spotify redirects back to (`resonote`), for `ASWebAuthenticationSession`.
+    public var callbackScheme: String
+    /// `resonote://spotify-auth` unless the server says otherwise.
+    public var redirectUri: String
+
+    private enum CodingKeys: String, CodingKey { case url, callbackScheme, redirectUri }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        url = try c.decode(URL.self, forKey: .url)
+        callbackScheme = try c.decodeIfPresent(String.self, forKey: .callbackScheme) ?? SpotifyAuth.callbackScheme
+        redirectUri = try c.decodeIfPresent(String.self, forKey: .redirectUri) ?? SpotifyAuth.callbackURL.absoluteString
+    }
+}
+
+/// new: `POST /api/account/spotify/session` — the account the code linked.
+public struct SpotifyLinkResponse: Decodable, Sendable {
+    public var account: SpotifyAccount
+}
+
+/// new: one Spotify Connect device (`GET /api/playback/spotify/devices`).
+public struct SpotifyDevice: Codable, Sendable, Hashable, Identifiable {
+    public var id: String
+    public var name: String
+    /// `Smartphone`, `Computer`, `Speaker`, …
+    public var type: String
+    public var isActive: Bool
+    public var volumePercent: Int?
+
+    public init(id: String, name: String, type: String, isActive: Bool = false, volumePercent: Int? = nil) {
+        self.id = id
+        self.name = name
+        self.type = type
+        self.isActive = isActive
+        self.volumePercent = volumePercent
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, type, isActive, volumePercent }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        type = try c.decodeIfPresent(String.self, forKey: .type) ?? ""
+        isActive = try c.decodeIfPresent(Bool.self, forKey: .isActive) ?? false
+        volumePercent = try? c.decodeIfPresent(Int.self, forKey: .volumePercent)
+    }
+
+    public var isSmartphone: Bool { type.caseInsensitiveCompare("Smartphone") == .orderedSame }
+
+    /// Where a play retried after waking the Spotify app on this phone should go: the
+    /// active smartphone, else the only smartphone, else the active device. Never an
+    /// arbitrary idle device (a computer at home), so nil when none qualifies.
+    public static func target(in devices: [SpotifyDevice]) -> SpotifyDevice? {
+        let phones = devices.filter(\.isSmartphone)
+        if let active = phones.first(where: \.isActive) { return active }
+        if phones.count == 1 { return phones[0] }
+        return devices.first(where: \.isActive)
+    }
+}
+
+/// new: `GET /api/playback/spotify/devices`.
+public struct SpotifyDevicesResponse: Decodable, Sendable {
+    public var devices: [SpotifyDevice]
+
+    private enum CodingKeys: String, CodingKey { case devices }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        devices = try c.decodeLossyArray(SpotifyDevice.self, forKey: .devices)
+    }
+}
+
+/// new: what `POST /api/playback/spotify` asks Spotify Connect to do.
+public enum SpotifyPlaybackAction: String, Codable, Sendable {
+    case play, pause, next, previous
+}
+
+/// new: the body of `POST /api/playback/spotify`.
+public struct SpotifyPlaybackRequest: Encodable, Sendable, Hashable {
+    public var action: SpotifyPlaybackAction
+    /// A 22-character track id; with `play`, plays that track instead of resuming.
+    public var spotifyId: String?
+    public var deviceId: String?
+
+    public init(action: SpotifyPlaybackAction, spotifyId: String? = nil, deviceId: String? = nil) {
+        self.action = action
+        self.spotifyId = spotifyId
+        self.deviceId = deviceId
+    }
+}
+
+/// new: why `POST /api/playback/spotify` didn't play. Each has short copy the app shows as is.
+public enum SpotifyPlaybackError: LocalizedError, Sendable, Equatable {
+    /// 409 `no-device`: Spotify isn't open on any device.
+    case noDevice
+    /// 403 `premium-required`: playback through the Web API needs Spotify Premium.
+    case premiumRequired
+    /// 409 `not-linked`: no Spotify account is linked (or the link was revoked).
+    case notLinked
+
+    public var errorDescription: String? {
+        switch self {
+        case .noDevice: "Open Spotify on a device first."
+        case .premiumRequired: "Playing through Spotify needs Spotify Premium."
+        case .notLinked: "Sign in with Spotify in Settings to play there."
+        }
+    }
+
+    /// The typed error for a playback refusal's `error` code, if it is one.
+    public init?(code: String) {
+        switch code {
+        case "no-device": self = .noDevice
+        case "premium-required": self = .premiumRequired
+        case "not-linked": self = .notLinked
+        default: return nil
+        }
+    }
 }
 
 /// Writes accepted by `POST /api/sync`. The server trusts only the bearer token's

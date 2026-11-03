@@ -22,7 +22,7 @@ Local development uses the same binding through miniflare; `npm run dev` applies
 npx wrangler d1 execute resonote --local --file=d1/schema.sql
 ```
 
-Apply `d1/migrations/*.sql` in order after the schema; they are idempotent. `0005_private_first.sql` makes existing entries and collections private once (guarded by a row in `migration_markers`) and creates `linked_accounts`, which holds Last.fm session keys.
+Apply `d1/migrations/*.sql` in order after the schema; they are idempotent. `0005_private_first.sql` makes existing entries and collections private once (guarded by a row in `migration_markers`) and creates `linked_accounts`, which holds Last.fm session keys. `0006_spotify.sql` creates `spotify_accounts`, which holds Spotify tokens.
 
 ## Sign-in email — Resend
 
@@ -74,9 +74,20 @@ LASTFM_SHARED_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 It is shown next to the API key on https://www.last.fm/api/accounts. Set it the same way (`npx wrangler secret put LASTFM_SHARED_SECRET`). Without it (or without `LASTFM_API_KEY`), `GET /api/account/lastfm` reports `configured: false` and the app falls back to a typed username. Last.fm redirects back to `resonote://lastfm-auth`; no callback URL needs registering, because the server passes it as `cb`.
 
-## Spotify — no key
+## Spotify — sign-in, history and playback
 
-Spotify reaches the app through Last.fm and ListenBrainz scrobbling and through shared links, not through a Spotify developer application: Development Mode is limited to a Premium owner and five allowlisted users (see `docs/IOS_NOW_PLAYING.md`). A client-credentials app for `GET /tracks/{id}` (ISRC lookup on shared links) is a possible later addition.
+"Sign in with Spotify" (`docs/IOS_API.md` → Linked accounts: Spotify) uses Authorization Code with PKCE; the Worker exchanges the code and refreshes tokens with the app's client secret, so both stay server-side:
+
+```dotenv
+SPOTIFY_CLIENT_ID=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+SPOTIFY_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+# Optional; this is the default
+SPOTIFY_REDIRECT_URI=resonote://spotify-auth
+```
+
+Create the app at https://developer.spotify.com/dashboard (Web API), register the redirect URI `resonote://spotify-auth` exactly, and set both secrets on the Worker (`npx wrangler secret put SPOTIFY_CLIENT_ID`, `npx wrangler secret put SPOTIFY_CLIENT_SECRET`); locally put them in `.env.local`. Set `SPOTIFY_REDIRECT_URI` only to use a different registered redirect (a plain Worker var is enough); the app reads it back from `GET /api/account/spotify/auth-url`. Without the id or secret, `GET /api/account/spotify` reports `configured: false` and the sign-in routes answer 501.
+
+Scopes requested: `user-read-recently-played user-read-currently-playing user-read-playback-state user-modify-playback-state`. While the app is in Development Mode only accounts added under *User Management* (up to five, plus the owner) can sign in; Spotify answers others with a 403, which the server reports as `This Spotify account isn't on Resonote's allowlist yet.` Playback through Spotify Connect needs Spotify Premium. Tokens live in the `spotify_accounts` table (`d1/migrations/0006_spotify.sql`) and are never returned to the app.
 
 ## Odesli / song.link — optional
 

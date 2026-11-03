@@ -17,7 +17,7 @@ NotesNotes (code name Resonote) is a native SwiftUI app for iOS 26 backed by a C
 ## What the app does
 
 - Opens on what you're playing, your drafts, your own logged listens, and your recent notes; other people's published writing is one tap away, never the home screen.
-- Knows what you listened to so nobody types a song name: the Music app and Apple Music history, Spotify and other scrobblers through Last.fm (Sign in with Last.fm) or ListenBrainz, the Journaling Suggestions picker, Shazam, and shared links, ranked into one recent list with the likeliest song attached. See [`docs/IOS_NOW_PLAYING.md`](docs/IOS_NOW_PLAYING.md).
+- Knows what you listened to so nobody types a song name: the Music app and Apple Music history, Spotify through Sign in with Spotify (allowlisted accounts) or, like other scrobblers, through Last.fm (Sign in with Last.fm) or ListenBrainz, the Journaling Suggestions picker, Shazam, and shared links, ranked into one recent list with the likeliest song attached. See [`docs/IOS_NOW_PLAYING.md`](docs/IOS_NOW_PLAYING.md).
 - Write first, attach later: a note saved with no song keeps its time and picks up the song that was playing when a source reports it.
 - Rating-free journal entries with freeform writing, optional reflections, lenses, and rerollable prompts.
 - Explicit `\` music references in prose. The writer picks the exact artist, album, song, or genre; prose is never silently autolinked.

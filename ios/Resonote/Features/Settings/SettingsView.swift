@@ -24,6 +24,8 @@ struct SettingsView: View {
     @State private var deleteError: String?
     @State private var isSigningInToLastfm = false
     @State private var confirmUnlinkLastfm = false
+    @State private var isSigningInToSpotify = false
+    @State private var confirmUnlinkSpotify = false
 
     var body: some View {
         Form {
@@ -44,7 +46,17 @@ struct SettingsView: View {
             if previous != nil { saveUsernames() }
         }
         .onDisappear { saveUsernames() }
-        .task(id: model.hasLiveSession) { await nowPlaying.lastfm.load() }
+        .task(id: model.hasLiveSession) {
+            async let lastfm: Void = nowPlaying.lastfm.load()
+            async let spotify: Void = nowPlaying.spotify.load()
+            _ = await (lastfm, spotify)
+        }
+        .confirmationDialog("Unlink Spotify?", isPresented: $confirmUnlinkSpotify, titleVisibility: .visible) {
+            Button("Unlink", role: .destructive) { Task { await nowPlaying.spotify.unlink() } }
+            Button("Keep it linked", role: .cancel) {}
+        } message: {
+            Text("Resonote stops reading your Spotify listening and can't play songs there. You can sign in again any time.")
+        }
         .confirmationDialog("Unlink Last.fm?", isPresented: $confirmUnlinkLastfm, titleVisibility: .visible) {
             Button("Unlink", role: .destructive) { Task { await nowPlaying.lastfm.unlink() } }
             Button("Keep it linked", role: .cancel) {}
@@ -87,7 +99,7 @@ struct SettingsView: View {
                         .foregroundStyle(RN.Palette.rustText)
                 }
                 if !model.isSignedIn, nowPlaying.linkedSources.hasRemote {
-                    Text("Sign in to read Last.fm and ListenBrainz.")
+                    Text("Sign in to read Spotify, Last.fm, and ListenBrainz.")
                 }
                 Text("Resonote reads your recent listens from these so you rarely have to name a song. YouTube Music: share a song to Resonote, or tap Identify — Shazam can hear what's playing, even in AirPods.")
             }
@@ -145,19 +157,73 @@ struct SettingsView: View {
     // MARK: Spotify
 
     private var spotifySection: some View {
-        Section {
-            Link(destination: SourceLinks.lastfmApplications) {
-                AboutLinkRow(title: "Connect Spotify to Last.fm")
+        let link = nowPlaying.spotify
+        return Section {
+            if let account = link.account {
+                LabeledContent("Spotify") {
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(account.name)
+                            .foregroundStyle(RN.Palette.muted)
+                        Text(account.canPlay ? "Premium · plays songs here" : "Plays need Spotify Premium")
+                            .font(.footnote)
+                            .foregroundStyle(RN.Palette.muted)
+                    }
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("Spotify, linked as \(account.name). \(account.canPlay ? "Premium, plays songs here." : "Playing needs Spotify Premium.")")
+                Button("Unlink Spotify", role: .destructive) { confirmUnlinkSpotify = true }
+                    .disabled(link.isWorking)
+            } else if link.state != .notConfigured {
+                Button {
+                    signInToSpotify()
+                } label: {
+                    StableLabel(isSigningInToSpotify || link.isWorking ? "Signing in to Spotify…" : "Sign in with Spotify", among: ["Sign in with Spotify", "Signing in to Spotify…"])
+                }
+                .disabled(!model.hasLiveSession || isSigningInToSpotify || link.isWorking)
+                .accessibilityHint("Opens Spotify to let Resonote read your listening and play songs")
             }
-            Link(destination: SourceLinks.listenbrainzServices) {
-                AboutLinkRow(title: "Connect Spotify to ListenBrainz")
+            if link.account == nil {
+                Link(destination: SourceLinks.lastfmApplications) {
+                    AboutLinkRow(title: "Connect Spotify to Last.fm")
+                }
+                Link(destination: SourceLinks.listenbrainzServices) {
+                    AboutLinkRow(title: "Connect Spotify to ListenBrainz")
+                }
             }
         } header: {
             Text("Spotify")
         } footer: {
-            Text("Spotify doesn't let apps read playback. Connect it once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them, on every device.")
+            VStack(alignment: .leading, spacing: RN.Space.s) {
+                if let failure = link.failure {
+                    Text(failure)
+                        .foregroundStyle(RN.Palette.rustText)
+                }
+                if link.account != nil {
+                    Text("Resonote reads what you play on Spotify and, with Premium, plays songs on your Spotify when you tap Play.")
+                } else if link.state == .notConfigured {
+                    Text("Spotify sign-in isn't set up on this server. Connect Spotify once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them, on every device.")
+                } else {
+                    Text("Spotify sign-in is open only to accounts on Resonote's Spotify allowlist for now. Or connect Spotify once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them.")
+                }
+            }
         }
         .listRowBackground(RN.Palette.paper2)
+    }
+
+    /// Spotify sign-in, Authorization Code with PKCE: a fresh verifier and state, Spotify's
+    /// page, then `resonote://spotify-auth?code=…&state=…`, and the server exchanges the code.
+    private func signInToSpotify() {
+        isSigningInToSpotify = true
+        Task {
+            defer { isSigningInToSpotify = false }
+            guard let attempt = await nowPlaying.spotify.begin() else { return }
+            do {
+                let callback = try await webAuthenticationSession.authenticate(using: attempt.url, callbackURLScheme: attempt.callbackScheme)
+                await nowPlaying.spotify.finish(callback: callback, attempt: attempt)
+            } catch {
+                // Closing the Spotify page is a choice, not an error.
+            }
+        }
     }
 
     // MARK: Identify

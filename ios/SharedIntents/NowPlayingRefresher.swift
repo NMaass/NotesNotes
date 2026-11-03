@@ -45,7 +45,7 @@ nonisolated enum NowPlayingRefresher {
                 try await api.remoteNowPlaying(lastfm: sources.lastfmUser, listenbrainz: sources.listenbrainzUser, resolve: false)
             }
             if let response {
-                answered.formUnion([.lastfm, .listenbrainz])
+                answered.formUnion(response.answeredSources)
                 if let track = response.track {
                     candidates.append(Candidate(track: track, resolution: response.resolution))
                 }

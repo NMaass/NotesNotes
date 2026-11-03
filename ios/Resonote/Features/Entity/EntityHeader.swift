@@ -7,6 +7,8 @@ struct EntityHeader: View {
     let page: EntityPage
     let isPlaying: Bool
 
+    @Environment(NowPlayingService.self) private var nowPlaying
+
     static let artworkSize: CGFloat = 176
 
     var body: some View {
@@ -23,6 +25,9 @@ struct EntityHeader: View {
                     EntityByline(page: page)
                 }
             }
+            if case .song(let song) = page.entity {
+                PlayRow(target: playTarget(song))
+            }
             if let summary = page.summary {
                 Text(summary)
                     .font(.body)
@@ -31,6 +36,12 @@ struct EntityHeader: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The song, with the now-playing track's ISRC and links when it is the same song.
+    private func playTarget(_ song: Song) -> PlaybackTarget {
+        let track = nowPlaying.song?.id == song.id ? nowPlaying.track : nil
+        return PlaybackTarget(song: song, artistName: page.artist?.name, track: track)
     }
 
     @ViewBuilder

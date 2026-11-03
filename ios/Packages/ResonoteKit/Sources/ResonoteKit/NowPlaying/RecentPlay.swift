@@ -13,6 +13,8 @@ public struct RecentPlay: Codable, Sendable, Hashable, Identifiable {
         case libraryLastPlayed = "library-last-played"
         case lastfm
         case listenbrainz
+        /// Spotify's recently played or currently playing, through the server's linked account.
+        case spotify
         /// The Music app's player, sampled now.
         case musicApp = "music-app"
         case shazam
@@ -24,6 +26,7 @@ public struct RecentPlay: Codable, Sendable, Hashable, Identifiable {
             case .appleMusicRecent, .libraryLastPlayed, .musicApp: "Apple Music"
             case .lastfm: "Last.fm"
             case .listenbrainz: "ListenBrainz"
+            case .spotify: "Spotify"
             case .shazam: "Shazam"
             case .link: "Shared link"
             }
@@ -35,6 +38,7 @@ public struct RecentPlay: Codable, Sendable, Hashable, Identifiable {
             case .appleMusicRecent, .libraryLastPlayed, .musicApp: .appleMusic
             case .lastfm: .lastfm
             case .listenbrainz: .listenbrainz
+            case .spotify: .spotify
             case .shazam: .shazam
             case .link: .link
             case .journalingSuggestion: .manual
@@ -86,8 +90,9 @@ public struct RecentPlay: Codable, Sendable, Hashable, Identifiable {
         case .appleMusic: .musicApp
         case .lastfm: .lastfm
         case .listenbrainz: .listenbrainz
+        case .spotify: .spotify
         case .shazam: .shazam
-        case .spotify, .link, .manual: .link
+        case .link, .manual: .link
         }
         self.init(title: track.title, artist: track.artist, album: track.album, playedAt: track.observedDate, source: source, isPlaying: track.isPlaying, durationMs: track.durationMs, isrc: track.isrc, mbid: track.mbid, appleMusicId: track.appleMusicId, spotifyId: track.spotifyId, youtubeId: track.youtubeId, url: track.url, artworkURL: track.artworkURL)
     }

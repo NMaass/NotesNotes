@@ -70,14 +70,19 @@ sheet attaches the likeliest one and shows the next few as chips, so you rarely 
 | --- | --- | --- |
 | Music app | Apple Music, in real time on the phone, with the song's ISRC | In Resonote's Settings, turn on Apple Music. iOS asks for Media & Apple Music access. |
 | Apple Music history | Recently played on any of your devices, and library songs by last played date | The same Apple Music access. |
+| Spotify | What's playing on your Spotify and its last 10 plays, with Spotify ids, ISRCs, and art | Settings → Spotify → Sign in with Spotify. Only accounts on the Spotify app's allowlist can sign in for now (Development Mode). |
 | Last.fm / ListenBrainz | Spotify, and anything else that scrobbles: what's playing and the last 10 plays | Settings → Sign in with Last.fm (falls back to typing a username when the server has no Last.fm keys); ListenBrainz takes a username. |
 | Journal suggestions | Any app that shows on the Lock Screen's Now Playing (iOS 18 and later) | In the capture sheet's Recently played row, tap Journal suggestions and pick a song from the system sheet. No account, no microphone. |
 | Identify | Anything audible | Tap Identify. Shazam listens for a few seconds. The first use asks for the microphone. |
 | Links | Spotify, Apple Music, YouTube Music | Share a song to Resonote from the share sheet, or copy a link and open the app. |
 
-- **Spotify:** connect Spotify to Last.fm (last.fm → Settings → Applications) or to
-  ListenBrainz (listenbrainz.org → Settings → Connect services); Settings → Spotify links
-  to both pages. Then sign in with Last.fm or add your ListenBrainz username in Resonote.
+- **Spotify:** Settings → Spotify → **Sign in with Spotify** reads your Spotify history
+  directly and lets Play start songs on your Spotify. Resonote's Spotify app is in
+  Development Mode, so only accounts on its allowlist (a short list added by hand in the
+  Spotify developer dashboard) can sign in; anyone else sees "This Spotify account isn't on
+  Resonote's allowlist yet." Without it, connect Spotify to Last.fm (last.fm → Settings →
+  Applications) or to ListenBrainz (listenbrainz.org → Settings → Connect services);
+  Settings → Spotify links to both pages. A Spotify play and its scrobble merge into one row.
 - **YouTube Music:** it doesn't scrobble, so use the share sheet, Identify, or Journal
   suggestions.
 - **Identify prompt:** when something is playing that no source can name, the capture
@@ -90,6 +95,29 @@ sheet attaches the likeliest one and shows the next few as chips, so you rarely 
 
 Whatever the source, the backend matches the song to the catalog and suggests
 genres, lenses, and moods for your note.
+
+## Play
+
+A song's page, the capture sheet's song, and the now-playing card have a **Play** button.
+Nothing plays until you tap it. It tries, in order:
+
+1. **Spotify** — when you're signed in with Spotify, have Premium, and the song has a
+   Spotify id: the server asks Spotify Connect to play it. If Spotify isn't open on any
+   device, Resonote opens the Spotify app on the song (`spotify:track:<id>`) and asks
+   once more about two seconds later, on your iPhone's Spotify or the active device, never
+   on an idle one elsewhere. It gives up rather than play more than 10 seconds after your
+   tap. Without the Spotify app, the song opens in the web player instead.
+2. **Apple Music** — when Media & Apple Music is allowed: MusicKit finds the song in the
+   Apple Music catalog (by ISRC when known, else by title and artist) and the Music app
+   plays it. This needs an Apple Music subscription.
+3. **A link** — otherwise the song opens in Spotify, Apple Music, or YouTube Music, in
+   that order, by whichever link Resonote has.
+
+Anything that goes wrong shows as one short line beside the button.
+
+Resonote doesn't use the Spotify iOS SDK. It is a binary framework that this project
+can't build or verify without Xcode, and the `spotify:` deep link plus Spotify Connect
+through the Web API already wake the Spotify app and play the song.
 
 ## Private by default
 
@@ -132,7 +160,8 @@ Run these from the repository root. The API contract is in
 [docs/IOS_API.md](../docs/IOS_API.md).
 
 1. Deploy the API, which adds bearer-token auth, catalog search and entity reads, the
-   feed, `/api/music/resolve`, `/api/now-playing`, and Last.fm sign-in:
+   feed, `/api/music/resolve`, `/api/now-playing`, Last.fm sign-in, and Spotify sign-in
+   and playback:
    `npm run cf:deploy`
 2. Apply every migration in `d1/migrations/` in order, for example:
    `npx wrangler d1 execute resonote --remote --file d1/migrations/0005_private_first.sql`.
@@ -144,3 +173,8 @@ Run these from the repository root. The API contract is in
 4. For Sign in with Last.fm, also set the application's shared secret:
    `npx wrangler secret put LASTFM_SHARED_SECRET`. Without it, Settings falls back to
    typing a Last.fm username. ListenBrainz needs no key.
+5. For Sign in with Spotify, set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET`
+   (`npx wrangler secret put …`) from the Spotify developer dashboard, add the redirect
+   URI `resonote://spotify-auth` to the Spotify app, and apply
+   `d1/migrations/0006_spotify.sql`. While the Spotify app is in Development Mode, add
+   each person's Spotify account email under User Management before they sign in.

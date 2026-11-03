@@ -8,7 +8,7 @@ import UIKit
 ///
 /// Sources, sampled on demand rather than watched in the background:
 /// 1. the Music app on this phone (real time, Apple Music only);
-/// 2. Last.fm / ListenBrainz through the backend (covers Spotify and anything that scrobbles);
+/// 2. Spotify (signed in), Last.fm, and ListenBrainz through the backend;
 /// 3. Shazam, when the person asks it to listen;
 /// 4. shared or pasted links, and tracks handed over by a Shortcut.
 ///
@@ -59,6 +59,10 @@ final class NowPlayingService {
     private(set) var othersAudible = false
     /// The person's Last.fm web-auth link.
     let lastfm: LastfmLink
+    /// The person's Spotify sign-in (history, now playing, and playback through the server).
+    let spotify: SpotifyLink
+    /// Plays a song when the person taps Play.
+    let playback: PlaybackService
 
     /// Starts Identify on its own when capture opens and nothing else can say what's
     /// audible. Off by default: it opens the microphone.
@@ -122,6 +126,9 @@ final class NowPlayingService {
         appleMusicAccess = appleMusic.access
         autoIdentify = UserDefaults.standard.bool(forKey: Self.autoIdentifyKey)
         lastfm = LastfmLink(model: model)
+        let spotify = SpotifyLink(model: model)
+        self.spotify = spotify
+        playback = PlaybackService(model: model, spotify: spotify)
         let snapshot = NowPlayingSnapshot.load()
         if let restored = snapshot.track, !restored.isStale() {
             track = restored
@@ -130,6 +137,7 @@ final class NowPlayingService {
             isConfirmedPlaying = restored.claimsPlayback()
         }
         lastfm.onChange = { [weak self] linked, username in self?.lastfmLinkChanged(linked: linked, username: username) }
+        spotify.onChange = { [weak self] linked in self?.spotifyLinkChanged(linked: linked) }
         model.onAccountChange = { [weak self] in self?.accountChanged() }
         rankRecent()
     }
@@ -157,6 +165,8 @@ final class NowPlayingService {
         }
         scheduleRefresh()
         detectCopiedLink()
+        // Whether Spotify can play here (Premium) is asked once a launch, not persisted.
+        if spotify.state == .unknown { Task { await spotify.load() } }
     }
 
     /// Call when the scene leaves the foreground.
@@ -208,7 +218,7 @@ final class NowPlayingService {
         await model.waitUntilRestored()
         if model.hasLiveSession, linkedSources.hasRemote {
             if let response = try? await model.api.remoteNowPlaying(lastfm: linkedSources.lastfmUser, listenbrainz: linkedSources.listenbrainzUser, resolve: false) {
-                answered.formUnion([.lastfm, .listenbrainz])
+                answered.formUnion(response.answeredSources)
                 if let remote = response.track { candidates.append(remote) }
                 remoteRecent = response.recentPlays
             }
@@ -648,15 +658,25 @@ final class NowPlayingService {
         }
     }
 
-    /// Someone signed out, or someone else signed in: the previous person's Last.fm link
-    /// leaves this phone (a typed username comes back), and the new person's is read.
+    /// Someone signed out, or someone else signed in: the previous person's Last.fm and
+    /// Spotify links leave this phone (a typed username comes back), and the new person's
+    /// are read.
     private func accountChanged() {
         lastfm.reset()
+        spotify.reset()
         historyLookups = [:]
         remoteRecent = []
         lastfmLinkChanged(linked: false, username: nil)
+        spotifyLinkChanged(linked: false)
         rankRecent()
         Task { await lastfm.load() }
+        Task { await spotify.load() }
+    }
+
+    private func spotifyLinkChanged(linked: Bool) {
+        guard linkedSources.spotifyLinked != linked else { return }
+        linkedSources.spotifyLinked = linked
+        scheduleRefresh(force: true)
     }
 
     private func lastfmLinkChanged(linked: Bool, username: String?) {

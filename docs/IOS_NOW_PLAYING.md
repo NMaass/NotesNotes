@@ -64,7 +64,7 @@ let a note be written before its song is settled.
 | ListenBrainz `listens` | Scrobblers | Yes (`listened_at`) | Same link as above | `min_ts`/`max_ts` paging; same half-or-4-minutes rule; Spotify imports lag minutes to hours. |
 | MusicKit `MusicRecentlyPlayedRequest<Song>` | Apple Music on every device (HomePod, Mac) | No | Same permission as the Music app | At most 30, in order, no dates: a "recent" list, not a timeline. The only view of plays that happened on another device. |
 | Library `lastPlayedDate` (MusicKit `Song`, `MPMediaItem`) | Songs in the library played in Music | Yes | Same permission | Library songs only. |
-| Spotify Web API `recently-played` | Spotify | Yes (`played_at`), up to 50 | Spotify sign-in | Dropped: Development Mode now means a Premium owner and five allowlisted users (announced 2026-02-06, in force since March 2026); extended quota needs an organisation with 250k monthly users. |
+| Spotify Web API `recently-played` and `currently-playing` (via the backend) | Spotify, on every device | Yes (`played_at`); live for the playing row | Sign in with Spotify | Used, for allowlisted accounts only: Development Mode means a Premium owner and a short allowlist (announced 2026-02-06, in force since March 2026); extended quota needs an organisation with 250k monthly users. Everyone else reaches Spotify through Last.fm or ListenBrainz. Plays under 30 seconds and podcasts are missing. |
 
 ## Using recent plays so nobody types
 
@@ -87,10 +87,15 @@ let a note be written before its song is settled.
 
 ## Dropped, with reasons
 
-- **Spotify Web API sign-in**, and the iOS SDK's **App Remote** for the same reason. App
-  Remote reads the Spotify app's player state locally and in real time while Resonote is
-  in the foreground, but it authenticates through the same client, so the five-user
-  allowlist applies. Fine behind a flag for the owner's phone; not a public source.
+- **Spotify sign-in as a public source**: it is used, but only for accounts on the
+  Spotify app's allowlist (Development Mode), so it cannot be the route for everyone.
+  The owner and a few allowlisted friends sign in with Spotify; everyone else links
+  Last.fm or ListenBrainz. Playback goes through Spotify Connect (Web API).
+- **The Spotify iOS SDK (App Remote)**: it reads the Spotify app's player state in real
+  time while Resonote is in the foreground, but the Web API's currently-playing endpoint
+  covers that seconds later, and the SDK is a binary framework that also wants a song
+  to start playing to connect. To wake a phone with no active Spotify device, the app
+  opens the song in Spotify by link and then starts it through Connect.
 - **Odesli / song.link API**: the public API was retired on 2026-07-31 (announced
   2026-05-21) and answers 401 `PUBLIC_API_ACCESS_DEPRECATED`. song.link *pages* still
   work and are still read for song.link links.
