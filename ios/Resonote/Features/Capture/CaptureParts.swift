@@ -263,7 +263,7 @@ struct CaptureFallbackOptions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: RN.Space.m) {
-            if microphoneDenied {
+            if microphoneDenied && AppFeatures.identify {
                 Button {
                     if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
                 } label: {
@@ -272,7 +272,7 @@ struct CaptureFallbackOptions: View {
                 }
                 .buttonStyle(.outline)
                 .accessibilityHint("Opens Resonote in the Settings app so it can listen")
-            } else {
+            } else if AppFeatures.identify {
                 Button(action: onIdentify) {
                     Label("Identify", systemImage: "waveform")
                         .frame(maxWidth: .infinity)

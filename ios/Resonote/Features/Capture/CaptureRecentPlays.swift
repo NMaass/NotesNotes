@@ -235,7 +235,7 @@ struct CaptureJournalingButton: View {
     let onPick: @MainActor ([RecentPlay], URL?) -> Void
 
     var body: some View {
-        #if canImport(JournalingSuggestions)
+        #if canImport(JournalingSuggestions) && !RESONOTE_CORE
         JournalingSuggestionsPicker {
             Label("Journal suggestions", systemImage: "book.pages")
                 .font(.subheadline)

@@ -1,0 +1,111 @@
+# XcodeGen spec for the lean "core" build of Resonote: the app target alone, with no
+# entitlements, so it signs with any Apple ID (a free account included) and installs on
+# an iPhone from Xcode. Generate it with `xcodegen --spec project-core.yml` in ios/.
+#
+# Left out, compared with project.yml: the widgets and Controls extension, the share
+# extension, the App Group, ShazamKit (Identify), and Journaling Suggestions.
+# `RESONOTE_CORE` hides their entry points in the app (see Resonote/App/AppFeatures.swift).
+# Without the App Group, the session token and caches live in the app's own container.
+name: ResonoteCore
+minimumXcodeGenVersion: 2.46.0
+
+options:
+  deploymentTarget:
+    iOS: "26.0"
+  developmentLanguage: en
+  createIntermediateGroups: true
+  groupSortPosition: top
+  projectFormat: xcode16_0
+  xcodeVersion: "26.0"
+  indentWidth: 4
+  tabWidth: 4
+  usesTabs: false
+
+configFiles:
+  Debug: Config/Base.xcconfig
+  Release: Config/Base.xcconfig
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    SWIFT_STRICT_CONCURRENCY: complete
+    SWIFT_EMIT_LOC_STRINGS: YES
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+    CODE_SIGN_STYLE: Automatic
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    TARGETED_DEVICE_FAMILY: "1"
+    SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+    SUPPORTS_MACCATALYST: NO
+    SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: NO
+    SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: NO
+    DEAD_CODE_STRIPPING: YES
+
+packages:
+  ResonoteKit:
+    path: Packages/ResonoteKit
+
+targets:
+  Resonote:
+    type: application
+    platform: iOS
+    sources:
+      - path: Resonote
+        excludes:
+          - "**/Info.plist"
+          - "**/*.entitlements"
+          - "**/*.md"
+      - path: Shared
+        excludes:
+          - "**/*.md"
+      - path: SharedIntents
+        optional: true
+    dependencies:
+      - package: ResonoteKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(RESONOTE_BUNDLE_ID)
+        TARGETED_DEVICE_FAMILY: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) RESONOTE_APP RESONOTE_CORE
+        ENABLE_PREVIEWS: YES
+    info:
+      # Outside Resonote/ so the full project never picks it up as a resource.
+      path: Core/Info.plist
+      properties:
+        CFBundleDisplayName: Resonote
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSRequiresIPhoneOS: true
+        ITSAppUsesNonExemptEncryption: false
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        UIUserInterfaceStyle: Dark
+        CFBundleURLTypes:
+          - CFBundleURLName: $(PRODUCT_BUNDLE_IDENTIFIER)
+            CFBundleTypeRole: Viewer
+            CFBundleURLSchemes:
+              - resonote
+        NSAppleMusicUsageDescription: Resonote reads what the Music app is playing so you can write about it.
+        # An empty App Group: AppGroup and TokenStore fall back to the app's own container and keychain.
+        ResonoteAppGroup: ""
+        ResonoteAPIBaseURL: $(RESONOTE_API_BASE_URL)
+
+schemes:
+  ResonoteCore:
+    build:
+      targets:
+        Resonote: all
+    run:
+      config: Debug
+    archive:
+      config: Release

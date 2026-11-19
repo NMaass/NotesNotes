@@ -7,7 +7,8 @@
 # APIs marked unavailable on Mac Catalyst are the exception: guard those with
 # `#if !targetEnvironment(macCatalyst)` only when an error proves it is needed.
 #
-# Usage: ios/scripts/typecheck.sh [kit|app|widgets|share|all]   (default: all)
+# Usage: ios/scripts/typecheck.sh [kit|app|widgets|share|core|all]   (default: all)
+# `core` checks the app as ResonoteCore.xcodeproj builds it (RESONOTE_CORE).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -63,7 +64,7 @@ check_target() {
   local extension_flag="-DRESONOTE_APP"
   if [[ "$name" != "Resonote" ]]; then extension_flag="-application-extension"; fi
   # shellcheck disable=SC2086
-  swiftc "${COMMON[@]}" "$extension_flag" -typecheck -parse-as-library -module-name "$name" \
+  swiftc "${COMMON[@]}" "$extension_flag" ${EXTRA_FLAGS:-} -typecheck -parse-as-library -module-name "$name" \
     -default-isolation MainActor -I "$BUILD" $files
 }
 
@@ -72,6 +73,7 @@ case "$TARGET_SELECTION" in
   app) build_kit; check_target Resonote "$ROOT/Resonote" "$ROOT/SharedIntents" ;;
   widgets) build_kit; check_target ResonoteWidgets "$ROOT/ResonoteWidgets" "$ROOT/SharedIntents" ;;
   share) build_kit; check_target ResonoteShare "$ROOT/ResonoteShare" ;;
+  core) build_kit; EXTRA_FLAGS="-DRESONOTE_CORE" check_target Resonote "$ROOT/Resonote" "$ROOT/SharedIntents" ;;
   all)
     build_kit
     check_target Resonote "$ROOT/Resonote" "$ROOT/SharedIntents"

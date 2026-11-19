@@ -705,14 +705,16 @@ struct CaptureSheet: View {
         .frame(minHeight: 32)
         .disabled(!ready || confirmation != nil)
         // The song on screen isn't the one playing (a paused or earlier one): listen for it.
-        Button {
-            startIdentify(fromTrack: true)
-        } label: {
-            Label("Not this song?", systemImage: "waveform")
+        if AppFeatures.identify {
+            Button {
+                startIdentify(fromTrack: true)
+            } label: {
+                Label("Not this song?", systemImage: "waveform")
+            }
+            .frame(minHeight: 32)
+            .disabled(display != .track || nowPlaying.isIdentifying || confirmation != nil)
+            .accessibilityHint("Listens for the song playing nearby")
         }
-        .frame(minHeight: 32)
-        .disabled(display != .track || nowPlaying.isIdentifying || confirmation != nil)
-        .accessibilityHint("Listens for the song playing nearby")
     }
 
     // MARK: Options

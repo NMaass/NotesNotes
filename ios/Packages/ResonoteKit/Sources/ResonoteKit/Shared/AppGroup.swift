@@ -5,17 +5,18 @@ import Foundation
 /// Identifiers come from each target's Info.plist (`ResonoteAppGroup`, which is
 /// also the keychain access group) so signing teams can change without code edits. When a
 /// build has no App Group entitlement (an unsigned simulator build), everything
-/// falls back to per-process storage instead of failing.
+/// falls back to per-process storage instead of failing. An empty `ResonoteAppGroup`
+/// (the lean core build, which has no App Group) means "no group" outright.
 public enum AppGroup {
     public static let identifier: String = Bundle.main.object(forInfoDictionaryKey: "ResonoteAppGroup") as? String ?? "group.dev.nmaass.resonote"
 
     public static var defaults: UserDefaults {
-        UserDefaults(suiteName: identifier) ?? .standard
+        identifier.isEmpty ? .standard : UserDefaults(suiteName: identifier) ?? .standard
     }
 
     /// The shared container, or Application Support when the group is unavailable.
     public static var containerURL: URL {
-        if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier) {
+        if !identifier.isEmpty, let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: identifier) {
             return url
         }
         let fallback = URL.applicationSupportDirectory.appending(path: "Resonote", directoryHint: .isDirectory)
