@@ -409,36 +409,6 @@ struct AppleMusicConnectButton: View {
     }
 }
 
-/// Spotify's icon in its brand green: the green circle with three black sound waves.
-struct SpotifyLogo: View {
-    static let green = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
-
-    var body: some View {
-        Canvas { context, size in
-            let side = min(size.width, size.height)
-            let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
-            context.fill(Path(ellipseIn: rect), with: .color(Self.green))
-            // Three arcs, widest on top, each a little lower and narrower.
-            let waves: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
-                (0.36, 0.30, 0.10, 0.085),
-                (0.53, 0.25, 0.08, 0.07),
-                (0.68, 0.20, 0.06, 0.06),
-            ]
-            for wave in waves {
-                var path = Path()
-                let y = rect.minY + side * wave.y
-                path.move(to: CGPoint(x: rect.midX - side * wave.half, y: y))
-                path.addQuadCurve(
-                    to: CGPoint(x: rect.midX + side * wave.half, y: y + side * 0.03),
-                    control: CGPoint(x: rect.midX, y: y - side * wave.lift)
-                )
-                context.stroke(path, with: .color(.black), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
-            }
-        }
-        .accessibilityHidden(true)
-    }
-}
-
 extension NowPlayingService {
     var isAppleMusicOn: Bool { linkedSources.appleMusicEnabled && appleMusicAccess == .granted }
     var canOfferSpotify: Bool { spotify.account == nil && spotify.state != .notConfigured }
