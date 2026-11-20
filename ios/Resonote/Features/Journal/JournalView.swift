@@ -63,11 +63,7 @@ private struct JournalTabScreen: View {
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    router.present(.capture(CapturePreset(origin: "journal")))
-                } label: {
-                    Label("New note", systemImage: "square.and.pencil")
-                }
+                WriteToolbarButton(origin: "journal")
             }
         }
     }
@@ -139,36 +135,47 @@ private struct JournalWelcome: View {
                         Label("Settings", systemImage: "gearshape")
                     }
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    WriteToolbarButton(origin: "journal")
+                }
             }
     }
 }
 
 private struct JournalWelcomeContent: View {
     @Environment(AppModel.self) private var model
+    @Environment(NowPlayingService.self) private var nowPlaying
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: RN.Space.m) {
-                Eyebrow("No password")
                 Text("Make a place for what you hear.")
                     .font(RN.Typography.display)
                     .foregroundStyle(RN.Palette.ink)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text("Use email and a one-time code — no password.")
+                Text(nowPlaying.canOfferSpotify
+                     ? "Sign in with Spotify and your Journal is ready. No password."
+                     : "Sign in with your email and a one-time code. No password.")
                     .font(.body)
                     .foregroundStyle(RN.Palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
-                Button {
-                    model.requireAuth {}
-                } label: {
-                    HStack(spacing: RN.Space.s) {
-                        Text("Continue with email")
-                        Image(systemName: "arrow.right")
-                            .accessibilityHidden(true)
+                // Spotify is the login: the server makes or finds the account from it.
+                // Sign in with Apple waits for a paid developer account, so there is no Apple button.
+                VStack(spacing: RN.Space.m) {
+                    if nowPlaying.canOfferSpotify {
+                        SpotifySignInButton(title: "Continue with Spotify", onGreen: true)
+                            .buttonStyle(.spotifyPill)
+                        Button("Use email instead") { model.requireAuth {} }
+                            .font(.subheadline)
+                            .foregroundStyle(RN.Palette.muted)
+                            .frame(minHeight: 44)
+                    } else {
+                        Button("Continue with email") { model.requireAuth {} }
+                            .buttonStyle(.solid)
                     }
                 }
-                .buttonStyle(.solid)
+                .frame(maxWidth: .infinity)
                 .padding(.top, RN.Space.l)
                 // Drafts kept before signing in stay reachable here.
                 JournalDraftsSection()

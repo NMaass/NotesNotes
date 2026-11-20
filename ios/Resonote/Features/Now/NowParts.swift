@@ -334,6 +334,22 @@ extension View {
     }
 }
 
+// MARK: - Writing
+
+/// The one "+" for starting a note, in the same top-right spot on Now and Journal.
+struct WriteToolbarButton: View {
+    @Environment(Router.self) private var router
+    let origin: String
+
+    var body: some View {
+        Button {
+            router.present(.capture(CapturePreset(origin: origin)))
+        } label: {
+            Label("Write about a song", systemImage: "plus")
+        }
+    }
+}
+
 // MARK: - Connecting a source
 
 /// The Spotify button: one tap opens Spotify's own sign-in. Signed out, that is the

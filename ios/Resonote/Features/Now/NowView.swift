@@ -29,6 +29,9 @@ struct NowView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 NowActionsMenu()
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                WriteToolbarButton(origin: "now")
+            }
         }
         .refreshable { await refreshAll() }
         .onAppear {
