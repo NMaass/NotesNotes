@@ -153,18 +153,23 @@ struct NowPlayingCard: View {
 
     // MARK: Nothing playing
 
-    /// When nothing is playing: one big button for each source not yet connected, side
-    /// by side in the slot the Write button keeps. Identify lives in the bar above the tabs.
+    /// When nothing is playing: one full-width pill for each source not yet connected,
+    /// stacked in the slot the Write button keeps. Identify lives in the bar above the tabs.
     @ViewBuilder
     private var nothingAction: some View {
         let spotify = nowPlaying.canOfferSpotify
         let appleMusic = !nowPlaying.isAppleMusicOn
         if spotify || appleMusic {
-            HStack(spacing: RN.Space.s) {
-                if spotify { SpotifySignInButton() }
-                if appleMusic { AppleMusicConnectButton() }
+            VStack(spacing: RN.Space.m) {
+                if spotify {
+                    SpotifySignInButton(title: "Continue with Spotify", onGreen: true)
+                        .buttonStyle(.spotifyPill)
+                }
+                if appleMusic {
+                    AppleMusicConnectButton(title: "Continue with Apple Music")
+                        .buttonStyle(.applePill)
+                }
             }
-            .buttonStyle(.solid)
         }
     }
 

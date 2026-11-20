@@ -65,11 +65,16 @@ extension ResolveResponse {
 struct SpotifyLogo: View {
     static let green = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
 
+    /// The circle and the waves. On a green button Spotify's guidelines call for the
+    /// black icon (black circle, green waves).
+    var circle: Color = SpotifyLogo.green
+    var waves: Color = .black
+
     var body: some View {
         Canvas { context, size in
             let side = min(size.width, size.height)
             let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
-            context.fill(Path(ellipseIn: rect), with: .color(Self.green))
+            context.fill(Path(ellipseIn: rect), with: .color(circle))
             // Three arcs, widest on top, each a little lower and narrower.
             let waves: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
                 (0.36, 0.30, 0.10, 0.085),
@@ -84,7 +89,7 @@ struct SpotifyLogo: View {
                     to: CGPoint(x: rect.midX + side * wave.half, y: y + side * 0.03),
                     control: CGPoint(x: rect.midX, y: y - side * wave.lift)
                 )
-                context.stroke(path, with: .color(.black), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
+                context.stroke(path, with: .color(waves), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
             }
         }
         .accessibilityHidden(true)
@@ -335,6 +340,8 @@ extension View {
 /// whole Resonote sign-in too (the server makes or finds the account).
 struct SpotifySignInButton: View {
     var title = "Spotify"
+    /// On a green pill the logo is black with green waves.
+    var onGreen = false
 
     @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
@@ -349,7 +356,7 @@ struct SpotifySignInButton: View {
             Label {
                 StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
             } icon: {
-                SpotifyLogo()
+                SpotifyLogo(circle: onGreen ? .black : SpotifyLogo.green, waves: onGreen ? SpotifyLogo.green : .black)
                     .frame(width: 22, height: 22)
             }
         }
@@ -407,6 +414,50 @@ struct AppleMusicConnectButton: View {
                            ? "Opens Settings to allow Media and Apple Music for Resonote"
                            : "Lets Resonote see what the Music app is playing")
     }
+}
+
+/// The pill buttons for connecting a source, styled like the services' own: Spotify
+/// green with black bold type, and Apple's white-on-dark with black type. Full width,
+/// one height, fully rounded.
+struct SourcePillButtonStyle: ButtonStyle {
+    enum Brand { case spotify, apple }
+    let brand: Brand
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.bold))
+            .labelStyle(SourcePillLabelStyle())
+            .foregroundStyle(Color.black)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(fill.opacity(configuration.isPressed ? 0.85 : 1), in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(isEnabled ? 1 : 0.6)
+    }
+
+    private var fill: Color {
+        switch brand {
+        case .spotify: SpotifyLogo.green
+        case .apple: .white
+        }
+    }
+}
+
+/// Logo then title, centered as one unit.
+private struct SourcePillLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 10) {
+            configuration.icon
+                .frame(width: 22, height: 22)
+            configuration.title
+        }
+    }
+}
+
+extension ButtonStyle where Self == SourcePillButtonStyle {
+    static var spotifyPill: SourcePillButtonStyle { SourcePillButtonStyle(brand: .spotify) }
+    static var applePill: SourcePillButtonStyle { SourcePillButtonStyle(brand: .apple) }
 }
 
 extension NowPlayingService {
