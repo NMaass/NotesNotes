@@ -256,8 +256,10 @@ struct CaptureJournalingButton: View {
 #if canImport(JournalingSuggestions)
 /// Songs in a picked suggestion: `GenericMedia` (iOS 18; any app's Now Playing, with the
 /// app's icon) and `Song` (iOS 17.2; Music library songs).
-enum JournalingPlays {
-    static func plays(in suggestion: JournalingSuggestion) async -> (plays: [RecentPlay], icon: URL?) {
+nonisolated enum JournalingPlays {
+    /// Off the main actor: the suggestion isn't Sendable, so it is read where it lands.
+    @concurrent
+    static func plays(in suggestion: sending JournalingSuggestion) async -> (plays: [RecentPlay], icon: URL?) {
         let fallbackDate = suggestion.date?.start
         var plays: [RecentPlay] = []
         var icon: URL?
