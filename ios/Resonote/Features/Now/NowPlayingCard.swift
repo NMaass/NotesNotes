@@ -145,18 +145,12 @@ struct NowPlayingCard: View {
 
     // MARK: Nothing playing
 
-    /// One primary action when nothing is playing: listen for the song, or connect a source.
+    /// The action when nothing is playing. With Identify on, the bar above the tabs already
+    /// offers it, so the slot stays empty (its height is still reserved by the Write layer);
+    /// without it, connect a source.
     @ViewBuilder
     private var nothingAction: some View {
-        if AppFeatures.identify {
-            Button {
-                router.present(.identify)
-            } label: {
-                Label("Identify", systemImage: "waveform")
-            }
-            .buttonStyle(.solid)
-            .accessibilityHint("Listens for the song playing nearby")
-        } else {
+        if !AppFeatures.identify {
             Button {
                 router.push(.settings)
             } label: {
