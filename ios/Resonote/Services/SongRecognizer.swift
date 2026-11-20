@@ -28,6 +28,8 @@ final class SongRecognizer {
     /// Listens for up to `timeout`. Cancelling the calling task, or the timeout, stops
     /// the session (and the microphone) at once rather than when ShazamKit gives up.
     func recognize(timeout: Duration = .seconds(15)) async -> Result<NowPlayingTrack, Failure> {
+        // The core build has no Identify; asking for the microphone there would be a privacy violation.
+        guard AppFeatures.identify else { return .failure(.unavailable("Identify isn't in this build.")) }
         guard await AVAudioApplication.requestRecordPermission() else { return .failure(.microphoneDenied) }
         let session = SHManagedSession()
         let outcome = await withTaskGroup(of: SHSession.Result?.self) { group in

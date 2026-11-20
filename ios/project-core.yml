@@ -96,6 +96,7 @@ targets:
             CFBundleURLSchemes:
               - resonote
         NSAppleMusicUsageDescription: Resonote reads what the Music app is playing so you can write about it.
+        NSMicrophoneUsageDescription: Resonote listens for a few seconds to identify the song that's playing, only when you ask.
         # An empty App Group: AppGroup and TokenStore fall back to the app's own container and keychain.
         ResonoteAppGroup: ""
         ResonoteAPIBaseURL: $(RESONOTE_API_BASE_URL)

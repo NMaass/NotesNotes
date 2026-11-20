@@ -86,14 +86,24 @@ struct NowPlayingAccessory: View {
         }
     }
 
+    /// Identify a song, or in the core build (no microphone) start a note about one.
     private var identify: some View {
-        Button {
-            router.present(.identify)
+        let canIdentify = AppFeatures.identify
+        let title = !canIdentify ? "Write about a song" : (nowPlaying.isIdentifying ? "Listening…" : "Identify a song")
+        return Button {
+            router.present(canIdentify ? .identify : .capture(CapturePreset(origin: "accessory")))
         } label: {
             HStack(spacing: 10) {
-                ListeningWaveform(isActive: nowPlaying.isIdentifying, height: 14)
-                    .frame(width: 30, height: 30)
-                Text(nowPlaying.isIdentifying ? "Listening…" : "Identify a song")
+                Group {
+                    if canIdentify {
+                        ListeningWaveform(isActive: nowPlaying.isIdentifying, height: 14)
+                    } else {
+                        Image(systemName: "square.and.pencil")
+                            .font(.body.weight(.semibold))
+                    }
+                }
+                .frame(width: 30, height: 30)
+                Text(title)
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
                 Spacer(minLength: 0)
@@ -101,8 +111,8 @@ struct NowPlayingAccessory: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(nowPlaying.isIdentifying ? "Listening" : "Identify a song")
-        .accessibilityHint("Listens for the song playing nearby")
+        .accessibilityLabel(canIdentify && nowPlaying.isIdentifying ? "Listening" : title)
+        .accessibilityHint(canIdentify ? "Listens for the song playing nearby" : "Starts a note about a song")
     }
 
     private func accessibilityTitle(_ track: NowPlayingTrack) -> String {

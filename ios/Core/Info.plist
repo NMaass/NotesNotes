@@ -39,6 +39,8 @@
 	<true/>
 	<key>NSAppleMusicUsageDescription</key>
 	<string>Resonote reads what the Music app is playing so you can write about it.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Resonote listens for a few seconds to identify the song that's playing, only when you ask.</string>
 	<key>ResonoteAPIBaseURL</key>
 	<string>$(RESONOTE_API_BASE_URL)</string>
 	<key>ResonoteAppGroup</key>
