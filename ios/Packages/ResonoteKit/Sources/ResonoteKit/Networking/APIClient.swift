@@ -107,6 +107,12 @@ public struct APIClient: Sendable {
     /// new: the server exchanges the code (with the verifier and its client secret) and
     /// keeps the tokens. A code works once; a refused one (400) needs a new sign-in, and a
     /// 403 means the account isn't on the app's Spotify allowlist.
+    /// Sign in with Spotify: signs in to the Resonote account linked to that Spotify
+    /// account, or makes one, and links it.
+    public func signInWithSpotify(code: String, codeVerifier: String) async throws -> SpotifySignInResponse {
+        try await send("POST", "/api/account/spotify/session", body: ["code": code, "codeVerifier": codeVerifier, "client": "ios"])
+    }
+
     public func linkSpotify(code: String, codeVerifier: String) async throws -> SpotifyAccount {
         let response: SpotifyLinkResponse = try await send("POST", "/api/account/spotify/session", body: ["code": code, "codeVerifier": codeVerifier])
         return response.account

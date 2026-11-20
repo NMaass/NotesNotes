@@ -61,6 +61,36 @@ extension ResolveResponse {
     }
 }
 
+/// Spotify's icon in its brand green: the green circle with three black sound waves.
+struct SpotifyLogo: View {
+    static let green = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
+
+    var body: some View {
+        Canvas { context, size in
+            let side = min(size.width, size.height)
+            let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+            context.fill(Path(ellipseIn: rect), with: .color(Self.green))
+            // Three arcs, widest on top, each a little lower and narrower.
+            let waves: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
+                (0.36, 0.30, 0.10, 0.085),
+                (0.53, 0.25, 0.08, 0.07),
+                (0.68, 0.20, 0.06, 0.06),
+            ]
+            for wave in waves {
+                var path = Path()
+                let y = rect.minY + side * wave.y
+                path.move(to: CGPoint(x: rect.midX - side * wave.half, y: y))
+                path.addQuadCurve(
+                    to: CGPoint(x: rect.midX + side * wave.half, y: y + side * 0.03),
+                    control: CGPoint(x: rect.midX, y: y - side * wave.lift)
+                )
+                context.stroke(path, with: .color(.black), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
+            }
+        }
+        .accessibilityHidden(true)
+    }
+}
+
 extension NowPlayingService {
     /// Cover art for the current track, falling back to the matched album.
     var nowArtworkURL: String? {
@@ -301,12 +331,11 @@ extension View {
 
 // MARK: - Connecting a source
 
-/// "Spotify": one tap runs the whole sign-in. Signed out of Resonote, it asks for that
-/// first and carries on afterward, so it is never grayed out.
+/// The Spotify button: one tap opens Spotify's own sign-in. Signed out, that is the
+/// whole Resonote sign-in too (the server makes or finds the account).
 struct SpotifySignInButton: View {
     var title = "Spotify"
 
-    @Environment(AppModel.self) private var model
     @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(\.webAuthenticationSession) private var webAuthenticationSession
     @State private var isSigningIn = false
@@ -315,9 +344,14 @@ struct SpotifySignInButton: View {
 
     var body: some View {
         Button {
-            model.requireAuth { signIn() }
+            signIn()
         } label: {
-            StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
+            Label {
+                StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
+            } icon: {
+                SpotifyLogo()
+                    .frame(width: 22, height: 22)
+            }
         }
         .disabled(isBusy)
         .accessibilityLabel(isBusy ? "Signing in to Spotify" : "Sign in with Spotify")
@@ -341,7 +375,7 @@ struct SpotifySignInButton: View {
     }
 }
 
-/// "Apple Music": asks once for Media & Apple Music; if that was refused, opens Settings.
+/// The Apple Music button, with the Apple logo: asks once for Media & Apple Music; if that was refused, opens Settings.
 struct AppleMusicConnectButton: View {
     var title = "Apple Music"
 
@@ -361,13 +395,47 @@ struct AppleMusicConnectButton: View {
                 }
             }
         } label: {
-            StableLabel(isRequesting ? "Asking…" : title, among: [title, "Asking…"])
+            Label {
+                StableLabel(isRequesting ? "Asking…" : title, among: [title, "Asking…"])
+            } icon: {
+                Image(systemName: "apple.logo")
+            }
         }
         .disabled(isRequesting)
         .accessibilityLabel("Use Apple Music")
         .accessibilityHint(nowPlaying.appleMusicAccess == .denied
                            ? "Opens Settings to allow Media and Apple Music for Resonote"
                            : "Lets Resonote see what the Music app is playing")
+    }
+}
+
+/// Spotify's icon in its brand green: the green circle with three black sound waves.
+struct SpotifyLogo: View {
+    static let green = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
+
+    var body: some View {
+        Canvas { context, size in
+            let side = min(size.width, size.height)
+            let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+            context.fill(Path(ellipseIn: rect), with: .color(Self.green))
+            // Three arcs, widest on top, each a little lower and narrower.
+            let waves: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
+                (0.36, 0.30, 0.10, 0.085),
+                (0.53, 0.25, 0.08, 0.07),
+                (0.68, 0.20, 0.06, 0.06),
+            ]
+            for wave in waves {
+                var path = Path()
+                let y = rect.minY + side * wave.y
+                path.move(to: CGPoint(x: rect.midX - side * wave.half, y: y))
+                path.addQuadCurve(
+                    to: CGPoint(x: rect.midX + side * wave.half, y: y + side * 0.03),
+                    control: CGPoint(x: rect.midX, y: y - side * wave.lift)
+                )
+                context.stroke(path, with: .color(.black), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 

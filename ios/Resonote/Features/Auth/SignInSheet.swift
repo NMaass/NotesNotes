@@ -1,9 +1,8 @@
 import ResonoteKit
 import SwiftUI
 
-/// Email one-time-code sign in. Both steps share one container sized to the
-/// larger of the two, so nothing jumps between them, and whatever the person was
-/// doing continues afterward (`AppModel.requireAuth`).
+/// Sign in: Continue with Spotify, or an email one-time code, in a stock grouped form.
+/// Whatever the person was doing continues afterward (`AppModel.requireAuth`).
 struct SignInSheet: View {
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
@@ -28,8 +27,6 @@ struct SignInSheet: View {
     @FocusState private var focus: Field?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private static let labels = ["Send code", "Sending…", "Continue", "Working…"]
-
     private struct Handover: Equatable {
         var token: String
         var bundle: ProfileBundle
@@ -39,37 +36,30 @@ struct SignInSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: RN.Space.l) {
-                    ZStack(alignment: .topLeading) {
-                        emailStep
-                            .opacity(step == .email ? 1 : 0)
-                            .allowsHitTesting(step == .email)
-                            .accessibilityHidden(step != .email)
-                        codeStep
-                            .opacity(step == .code ? 1 : 0)
-                            .allowsHitTesting(step == .code)
-                            .accessibilityHidden(step != .code)
-                    }
-                    VStack(alignment: .leading, spacing: RN.Space.s) {
-                        ReservedErrorRow(message: error)
-                        Button(action: primaryAction) {
-                            StableLabel(primaryLabel, among: Self.labels)
-                        }
-                        .buttonStyle(.solid)
-                        .disabled(isBusy || handover != nil || (step == .code && code.count != 6))
-                        agreement
-                    }
+            Form {
+                if step == .email {
+                    emailStep
+                } else {
+                    codeStep
                 }
-                .padding(.horizontal, RN.Space.gutter)
-                .padding(.top, RN.Space.l)
-                .padding(.bottom, RN.Space.xl)
+                Section {
+                } footer: {
+                    agreement
+                }
             }
-            .scrollBounceBehavior(.basedOnSize)
-            .background(RN.Palette.paper.ignoresSafeArea())
+            .navigationTitle(step == .email ? "Sign In" : "Enter Code")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel", action: cancel)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    if isBusy {
+                        ProgressView()
+                    } else {
+                        Button(step == .email ? "Next" : "Verify", action: primaryAction)
+                            .disabled(handover != nil || (step == .email ? !email.contains("@") : code.count != 6))
+                    }
                 }
             }
         }
@@ -90,111 +80,81 @@ struct SignInSheet: View {
 
     // MARK: Steps
 
-    private var emailStep: some View {
-        VStack(alignment: .leading, spacing: RN.Space.l) {
-            if model.sessionExpired, let handle = model.profile?.handle {
-                // The changes waiting on this iPhone go out only with the same account.
-                heading("Sign in again", "Use the email for @\(handle) to send what's waiting on this iPhone.")
-            } else {
-                heading("Keep your place", "Sign in without a password. Your current action will continue afterward.")
-            }
-            VStack(alignment: .leading, spacing: RN.Space.xs) {
-                Text("Email")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(RN.Palette.prose)
-                TextField("Email", text: $email, prompt: Text("you@example.com"))
-                    .keyboardType(.emailAddress)
-                    .textContentType(.emailAddress)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.send)
-                    .focused($focus, equals: .email)
-                    .onSubmit(primaryAction)
-                    .modifier(SignInFieldStyle())
-            }
-        }
-    }
-
-    private var codeStep: some View {
-        VStack(alignment: .leading, spacing: RN.Space.l) {
-            heading("Check your email", "Enter the six-digit code sent to \(sentTo).")
-            VStack(alignment: .leading, spacing: RN.Space.xs) {
-                Text("One-time code")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(RN.Palette.prose)
-                TextField("One-time code", text: $code, prompt: Text("000000"))
-                    .keyboardType(.numberPad)
-                    .textContentType(.oneTimeCode)
-                    .font(.title2.monospacedDigit())
-                    .tracking(4)
-                    .focused($focus, equals: .code)
-                    .onChange(of: code) { previous, value in codeChanged(from: previous, to: value) }
-                    .modifier(SignInFieldStyle())
-                if let devCode {
-                    Text("Development server: your code is \(devCode)")
-                        .font(.footnote)
-                        .foregroundStyle(RN.Palette.blue)
-                }
-            }
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: RN.Space.l) { secondaryActions }
-                VStack(alignment: .leading, spacing: RN.Space.m) { secondaryActions }
-            }
-            .font(.subheadline)
-            .buttonStyle(.borderless)
-        }
-    }
-
-    /// Going back always works (it cancels a request in flight); a new code waits for the current one.
+    /// Spotify first (one tap, no code), then email with a one-time code.
     @ViewBuilder
-    private var secondaryActions: some View {
-        Button("Use a different email", action: useDifferentEmail)
-        Button("Send a new code", action: requestCode)
-            .disabled(isBusy)
+    private var emailStep: some View {
+        if !model.sessionExpired {
+            Section {
+                SpotifySignInButton(title: "Continue with Spotify")
+            }
+        }
+        Section {
+            TextField("Email", text: $email)
+                .keyboardType(.emailAddress)
+                .textContentType(.emailAddress)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.next)
+                .focused($focus, equals: .email)
+                .onSubmit(primaryAction)
+        } header: {
+            Text("Continue with email")
+        } footer: {
+            if let error {
+                Text(error).foregroundStyle(.red)
+            } else if model.sessionExpired, let handle = model.profile?.handle {
+                Text("Use the email for @\(handle) to send what's waiting on this iPhone.")
+            } else {
+                Text("We'll email you a 6-digit code. No password needed.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var codeStep: some View {
+        Section {
+            TextField("6-digit code", text: $code)
+                .keyboardType(.numberPad)
+                .textContentType(.oneTimeCode)
+                .font(.title3.monospacedDigit())
+                .focused($focus, equals: .code)
+                .onChange(of: code) { previous, value in codeChanged(from: previous, to: value) }
+        } header: {
+            Text("Enter the 6-digit code we sent to \(sentTo)")
+                .textCase(nil)
+        } footer: {
+            if let error {
+                Text(error).foregroundStyle(.red)
+            } else if let devCode {
+                Text("Development server: your code is \(devCode)")
+            }
+        }
+        Section {
+            Button("Resend Code", action: requestCode)
+                .disabled(isBusy)
+            Button("Use a Different Email", action: useDifferentEmail)
+        }
     }
 
     /// What continuing agrees to, with both documents a tap away.
     private var agreement: some View {
         Text(Self.agreementText)
-            .font(.footnote)
-            .foregroundStyle(RN.Palette.muted)
-            .tint(RN.Palette.rustText)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, RN.Space.xs)
     }
 
     private static let agreementText: AttributedString = {
         func link(_ title: String, _ url: URL) -> AttributedString {
             var text = AttributedString(title)
             text.link = url
-            text.underlineStyle = .single
             return text
         }
-        var text = AttributedString("By continuing, you agree to Resonote's ")
-        text += link("Terms of use", ResonoteLinks.terms)
-        text += AttributedString(", including no objectionable content or abusive behavior, and its ")
-        text += link("Privacy policy", ResonoteLinks.privacy)
+        var text = AttributedString("By continuing, you agree to the ")
+        text += link("Terms of Use", ResonoteLinks.terms)
+        text += AttributedString(" and ")
+        text += link("Privacy Policy", ResonoteLinks.privacy)
         text += AttributedString(".")
         return text
     }()
-
-    private func heading(_ title: String, _ message: String) -> some View {
-        VStack(alignment: .leading, spacing: RN.Space.s) {
-            Text(title)
-                .font(RN.Typography.title)
-                .foregroundStyle(RN.Palette.ink)
-                .accessibilityAddTraits(.isHeader)
-            Text(message)
-                .font(.body)
-                .foregroundStyle(RN.Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-    }
-
-    private var primaryLabel: String {
-        if isBusy { return busyLabel }
-        return step == .email ? "Send code" : "Continue"
-    }
 
     // MARK: Actions
 
@@ -331,7 +291,7 @@ struct SignInSheet: View {
         code = ""
         devCode = nil
         error = nil
-        withAnimation(reduceMotion ? nil : RN.Motion.quick) { step = .email }
+        step = .email
         focus = .email
     }
 
@@ -357,16 +317,5 @@ struct SignInSheet: View {
         case nil:
             fallback
         }
-    }
-}
-
-/// The text field look used on both steps.
-private struct SignInFieldStyle: ViewModifier {
-    func body(content: Content) -> some View {
-        content
-            .padding(.horizontal, RN.Space.m)
-            .frame(minHeight: 50)
-            .background(RN.Palette.fill, in: RoundedRectangle(cornerRadius: RN.Radius.input))
-            .overlay(RoundedRectangle(cornerRadius: RN.Radius.input).strokeBorder(RN.Palette.lineStrong))
     }
 }
