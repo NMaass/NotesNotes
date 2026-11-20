@@ -357,7 +357,7 @@ struct SpotifySignInButton: View {
                 StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
             } icon: {
                 SpotifyLogo(circle: onGreen ? .black : SpotifyLogo.green, waves: onGreen ? SpotifyLogo.green : .black)
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
             }
         }
         .disabled(isBusy)
@@ -405,7 +405,12 @@ struct AppleMusicConnectButton: View {
             Label {
                 StableLabel(isRequesting ? "Asking…" : title, among: [title, "Asking…"])
             } icon: {
+                // The glyph is narrower than Spotify's circle, so it is set a little
+                // taller to look the same size beside it.
                 Image(systemName: "apple.logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 26)
             }
         }
         .disabled(isRequesting)
@@ -444,13 +449,20 @@ struct SourcePillButtonStyle: ButtonStyle {
     }
 }
 
-/// Logo then title, centered as one unit.
+/// The logo pinned at a fixed left inset in a 28 pt box, the title centered on the
+/// button, as Apple's sign-in buttons and most provider stacks do: every logo in a
+/// stack lines up, whatever its label.
 private struct SourcePillLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 10) {
-            configuration.icon
-                .frame(width: 22, height: 22)
+        ZStack(alignment: .leading) {
             configuration.title
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 52)
+                .frame(maxWidth: .infinity)
+            configuration.icon
+                .frame(width: 28, height: 28)
+                .padding(.leading, 18)
         }
     }
 }
