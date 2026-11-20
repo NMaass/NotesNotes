@@ -48,7 +48,7 @@ struct EntryDetailView: View {
         .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            if let entry, !isDeleting, isOwner(entry) || entry.isPublic {
+            if let entry, !isDeleting, isOwner(entry) || entry.isPublic, !isAuthorBlocked(entry) {
                 ToolbarItem(placement: .topBarTrailing) {
                     ShareLink(item: shareText(entry), subject: Text(shareSubject(entry))) {
                         Label("Share", systemImage: "square.and.arrow.up")
@@ -80,6 +80,12 @@ struct EntryDetailView: View {
     }
 
     /// The note as plain text: its title, the writing, and what it's about.
+    /// Blocked writing is hidden here, so it can't be shared either.
+    private func isAuthorBlocked(_ entry: JournalEntry) -> Bool {
+        guard let author = model.author(of: entry) else { return false }
+        return model.isBlocked(author.id)
+    }
+
     private func shareText(_ entry: JournalEntry) -> String {
         let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let body = entry.plainText.trimmingCharacters(in: .whitespacesAndNewlines)

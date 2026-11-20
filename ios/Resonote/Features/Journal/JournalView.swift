@@ -170,6 +170,9 @@ private struct JournalWelcomeContent: View {
                 }
                 .buttonStyle(.solid)
                 .padding(.top, RN.Space.l)
+                // Drafts kept before signing in stay reachable here.
+                JournalDraftsSection()
+                    .padding(.top, RN.Space.xl)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, RN.Space.gutter)
