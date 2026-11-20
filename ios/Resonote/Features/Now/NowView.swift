@@ -63,9 +63,8 @@ private struct NowListenDigest {
     }
 }
 
-/// "Recently played": one plain list with inset separators, no card. Signed out, one
-/// line and a sign-in button stand in; while the cached session is still being read,
-/// nothing shows, so nothing flashes.
+/// "Recently played": one plain list with inset separators, no card. Signed out it is
+/// left out: the Journal tab is where you sign in, and nothing crowds the bar above the tabs.
 private struct NowRecentPlays: View {
     @Environment(AppModel.self) private var model
     @State private var memo = JournalMemo<NowListenDigest.Input, NowListenDigest>()
@@ -98,16 +97,6 @@ private struct NowRecentPlays: View {
                 }
             }
             .loadsMissingCatalog(digest.refs, unavailable: $unavailable)
-        } else if !model.isRestoringSession {
-            VStack(alignment: .leading, spacing: RN.Space.m) {
-                Text("Sign in to keep what you hear and write. Everything starts private.")
-                    .font(.subheadline)
-                    .foregroundStyle(RN.Palette.muted)
-                    .fixedSize(horizontal: false, vertical: true)
-                Button("Continue with email") { model.requireAuth {} }
-                    .buttonStyle(.outline)
-                    .fixedSize()
-            }
         }
     }
 }
