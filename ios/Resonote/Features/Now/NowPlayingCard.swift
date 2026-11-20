@@ -18,7 +18,10 @@ struct NowPlayingCard: View {
 
     private var mode: Mode {
         if nowPlaying.track != nil { return .track }
-        return nowPlaying.phase == .nothing ? .nothing : .looking
+        // With no source connected there is nothing to check, so the connect buttons
+        // show from the first frame instead of after a "Checking your sources…" pause.
+        let hasSource = nowPlaying.isAppleMusicOn || nowPlaying.linkedSources.hasRemote
+        return nowPlaying.phase == .nothing || !hasSource ? .nothing : .looking
     }
 
     var body: some View {
