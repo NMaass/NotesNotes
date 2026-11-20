@@ -35,6 +35,32 @@ To build under a different account, set your own `RESONOTE_BUNDLE_ID` and
 `RESONOTE_APP_GROUP` in `Config/Signing.xcconfig`. `RESONOTE_API_BASE_URL` (default
 `https://resonote.nmaass.dev`) points a build at another backend.
 
+## Core build: the quickest way onto your iPhone
+
+`ResonoteCore.xcodeproj` (from `project-core.yml`) builds the app alone, with no
+entitlements, so it signs with any Apple ID, a free one included, and needs no
+developer-portal setup. It keeps sign-in, the Now tab and recent listening (Music app,
+Apple Music history, Spotify and Last.fm/ListenBrainz through the backend), writing,
+the journal, and offline sync. It leaves out the widgets and Controls, the share
+extension, Identify (ShazamKit), Journaling Suggestions, and the App Group; the
+`RESONOTE_CORE` flag hides their entry points (`Resonote/App/AppFeatures.swift`).
+
+1. Open `ios/ResonoteCore.xcodeproj` and pick your team under Signing & Capabilities
+   (or set `DEVELOPMENT_TEAM` in `Config/Signing.xcconfig`).
+2. Plug in the iPhone, turn on Developer Mode, and run the **ResonoteCore** scheme.
+3. A free Apple ID's builds expire after 7 days; run again from Xcode to renew. If the
+   bundle id is taken, set `RESONOTE_BUNDLE_ID` in `Config/Signing.xcconfig`.
+
+From the command line, with Xcode installed and the phone connected:
+
+```sh
+cd ios && xcodebuild -project ResonoteCore.xcodeproj -scheme ResonoteCore \
+  -destination 'generic/platform=iOS' -allowProvisioningUpdates build
+```
+
+Regenerate it with `xcodegen --spec project-core.yml`; check it without Xcode with
+`scripts/typecheck.sh core`.
+
 ## Regenerating the project
 
 `project.yml` is the source of truth. It generates `Resonote.xcodeproj`, each target's

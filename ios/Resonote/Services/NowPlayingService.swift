@@ -597,7 +597,7 @@ final class NowPlayingService {
     /// Offer Identify prominently: something is audible, the Music app is silent, and no
     /// source vouches for a song. History still carries the capture flow without it.
     var suggestsIdentify: Bool {
-        othersAudible && !isConfirmedPlaying && !isIdentifying
+        AppFeatures.identify && othersAudible && !isConfirmedPlaying && !isIdentifying
     }
 
     /// Adds what the person picked in the Journaling Suggestions sheet; `icon` is the

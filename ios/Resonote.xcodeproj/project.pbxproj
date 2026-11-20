@@ -43,6 +43,7 @@
 		6278F613108C0006D15473D7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 781D59AE9FE0B42E41FE2820 /* SettingsView.swift */; };
 		62BDAFA9A2CC038AFC1D65D9 /* Artwork.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1CACDB522B810FE46E6B425 /* Artwork.swift */; };
 		654095504FC2CF1961E296D3 /* IntentRouting.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16E576A7F1CBDC9F352AA7C2 /* IntentRouting.swift */; };
+		654E4BE56698B4D7EE87E35D /* AppFeatures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E390E27575804734639AC7F /* AppFeatures.swift */; };
 		683479F296418BDA3FD3FAE2 /* ResonoteWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 78A05203E6C47CC1D66F0C36 /* ResonoteWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		68674D4609E21D28812FA08E /* ResonoteKit in Frameworks */ = {isa = PBXBuildFile; productRef = AFECD25FF49DBB30CF0BBB6A /* ResonoteKit */; };
 		69D1792FDE12A87EF551EF12 /* EntryCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65DF7822B180C41DA19E85C8 /* EntryCard.swift */; };
@@ -187,6 +188,7 @@
 		839DF872ABA599F22E7ED2E8 /* ReferenceConnectionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReferenceConnectionSheet.swift; sourceTree = "<group>"; };
 		8813DDA71779F007171C1E63 /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		896FDD7C22B5B2A5930E12AF /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		8E390E27575804734639AC7F /* AppFeatures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppFeatures.swift; sourceTree = "<group>"; };
 		8EAF25B8E26408ED914D6615 /* SpotifyLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpotifyLink.swift; sourceTree = "<group>"; };
 		9126F1C09CC11A3B125ADBD2 /* ComposerEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerEditor.swift; sourceTree = "<group>"; };
 		91F10F827AF2E497ECA0E822 /* SongRecognizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SongRecognizer.swift; sourceTree = "<group>"; };
@@ -347,6 +349,7 @@
 		722C64A885642B7338F672EB /* App */ = {
 			isa = PBXGroup;
 			children = (
+				8E390E27575804734639AC7F /* AppFeatures.swift */,
 				AE4C5C8EF70B3FA6943431B1 /* AppModel.swift */,
 				16E576A7F1CBDC9F352AA7C2 /* IntentRouting.swift */,
 				5BF3243A6F68ED23C0E51BCC /* ResonoteApp.swift */,
@@ -741,6 +744,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				654E4BE56698B4D7EE87E35D /* AppFeatures.swift in Sources */,
 				2C470FE83AA025FF042FC60F /* AppModel.swift in Sources */,
 				6C7277F521DAB40CB71AEB79 /* AppleMusicHistory.swift in Sources */,
 				878D376CB9FF0A94C2D470E0 /* AppleMusicSource.swift in Sources */,

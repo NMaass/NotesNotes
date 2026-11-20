@@ -129,7 +129,7 @@ final class Router {
         case .identify(let key):
             tab = .now
             // Another app can open resonote://identify; only Resonote's own requests start the microphone.
-            let listens = trusted || IdentifyKey.matches(key)
+            let listens = AppFeatures.identify && (trusted || IdentifyKey.matches(key))
             requestCapture(listens ? .identify : .capture(CapturePreset(origin: "identify-link")))
         case .write(let kind, let id):
             sheet = .compose(ComposerContext(entityKind: kind, entityId: id))

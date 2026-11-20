@@ -51,19 +51,21 @@ struct NowPlayingAccessory: View {
             .accessibilityHint("Shows the Now tab")
 
             // The song shown may not be what's playing now (a paused or earlier song).
-            Button {
-                router.present(.identify)
-            } label: {
-                ListeningWaveform(isActive: nowPlaying.isIdentifying, height: 14)
-                    .frame(width: 22, height: 22)
-                    // Another app is audible and nothing vouches for this song.
-                    .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.primary)
+            if AppFeatures.identify {
+                Button {
+                    router.present(.identify)
+                } label: {
+                    ListeningWaveform(isActive: nowPlaying.isIdentifying, height: 14)
+                        .frame(width: 22, height: 22)
+                        // Another app is audible and nothing vouches for this song.
+                        .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.primary)
+                }
+                .buttonStyle(.plain)
+                .frame(minWidth: 36, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .accessibilityLabel(nowPlaying.isIdentifying ? "Listening" : "Identify a different song")
+                .accessibilityHint("Listens for the song playing nearby")
             }
-            .buttonStyle(.plain)
-            .frame(minWidth: 36, maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .accessibilityLabel(nowPlaying.isIdentifying ? "Listening" : "Identify a different song")
-            .accessibilityHint("Listens for the song playing nearby")
 
             Button {
                 router.present(.capture(CapturePreset(origin: "accessory")))

@@ -187,16 +187,18 @@ struct NowPlayingCard: View {
     private var otherSongRow: some View {
         HStack(spacing: RN.Space.m) {
             // Another app is audible and nothing vouches for this song: say so, louder.
-            Button {
-                router.present(.identify)
-            } label: {
-                Label(nowPlaying.suggestsIdentify ? "Something else playing? Identify" : "Not this song? Identify", systemImage: "waveform")
-                    .font(.subheadline.weight(nowPlaying.suggestsIdentify ? .semibold : .medium))
-                    .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.accentColor)
+            if AppFeatures.identify {
+                Button {
+                    router.present(.identify)
+                } label: {
+                    Label(nowPlaying.suggestsIdentify ? "Something else playing? Identify" : "Not this song? Identify", systemImage: "waveform")
+                        .font(.subheadline.weight(nowPlaying.suggestsIdentify ? .semibold : .medium))
+                        .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.accentColor)
+                }
+                .buttonStyle(.borderless)
+                .disabled(nowPlaying.isIdentifying)
+                .accessibilityHint("Listens for the song playing nearby")
             }
-            .buttonStyle(.borderless)
-            .disabled(nowPlaying.isIdentifying)
-            .accessibilityHint("Listens for the song playing nearby")
             Spacer(minLength: 0)
             PasteButton(payloadType: URL.self, onPaste: NowPaste.handler { [router, nowPlaying] url in
                 nowPlaying.dismissCopiedLink()

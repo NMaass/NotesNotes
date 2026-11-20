@@ -31,7 +31,7 @@ struct SettingsView: View {
         Form {
             sourcesSection
             spotifySection
-            identifySection
+            if AppFeatures.identify { identifySection }
             widgetsSection
             if !model.blockedProfiles.isEmpty {
                 blockedSection
