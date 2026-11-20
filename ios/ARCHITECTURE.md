@@ -209,10 +209,16 @@ display and journal prose (`RN.Typography`), SF for UI. Pill chips (`Chip`), car
 (tab bar, the now-playing accessory, sheets, one `.glassProminent` primary action per
 screen) — never on content cards. Calm, minimal, no ratings anywhere.
 
+Layout: one full-width column with the 20 pt gutter on every screen, plain lists with
+hairlines inset to the text (44 pt art, a title, one muted line), no cards around
+lists, no eyebrows or helper footers, and one primary action per screen; secondary
+actions live in the navigation bar or a thin bottom bar. Journal drills down: artists,
+then one artist's notes, then the note (Share in its bar).
+
 Shared building blocks (in `Resonote/DesignSystem/` and `Shared/Palette.swift`):
 `RN` tokens, `Eyebrow`, `SectionHeader`, `StableLabel`, `Chip`, `FlowLayout`,
 `ReservedErrorRow`, `EmptyStateView`, `.solid`/`.outline` button styles,
-`.cardSurface()`, `.paperBackground()`, `ArtworkView`, `VinylView`, `RichDocumentView`,
+`.cardSurface()`, `.paperBackground()`, `ArtworkView`, `VinylView`, `RecordPlayerView`, `RichDocumentView`,
 `EntryCard`, `EntityRow`.
 
 ## Conventions

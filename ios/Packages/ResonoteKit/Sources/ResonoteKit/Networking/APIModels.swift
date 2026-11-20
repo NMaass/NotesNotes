@@ -470,6 +470,15 @@ public struct SpotifyLinkResponse: Decodable, Sendable {
     public var account: SpotifyAccount
 }
 
+/// new: `POST /api/account/spotify/session` signed out (`client: "ios"`) — Sign in with
+/// Spotify: the linked account plus the Resonote session it opened.
+public struct SpotifySignInResponse: Decodable, Sendable {
+    public var account: SpotifyAccount
+    public var bundle: ProfileBundle?
+    public var token: String?
+    public var expiresAt: String?
+}
+
 /// new: one Spotify Connect device (`GET /api/playback/spotify/devices`).
 public struct SpotifyDevice: Codable, Sendable, Hashable, Identifiable {
     public var id: String

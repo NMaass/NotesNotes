@@ -79,7 +79,7 @@ final class SpotifyLink {
             let response = try await model.api.spotifyAuthURL(codeChallenge: SpotifyAuth.challenge(for: verifier), state: state)
             return Attempt(url: response.url, callbackScheme: response.callbackScheme, verifier: verifier, state: state)
         } catch APIError.unauthorized {
-            failure = "Sign in to Resonote first."
+            failure = "Spotify sign-in isn't available right now."
         } catch APIError.server(let status, _) where status == 501 {
             self.state = .notConfigured
             failure = "Spotify sign-in isn't set up on this server."
@@ -102,8 +102,19 @@ final class SpotifyLink {
         failure = nil
         defer { isWorking = false }
         do {
-            let account = try await model.api.linkSpotify(code: code, codeVerifier: attempt.verifier)
-            state = .linked(account)
+            if model.hasLiveSession {
+                let account = try await model.api.linkSpotify(code: code, codeVerifier: attempt.verifier)
+                state = .linked(account)
+            } else {
+                // Sign in with Spotify: Spotify's page is the whole sign-in.
+                let response = try await model.api.signInWithSpotify(code: code, codeVerifier: attempt.verifier)
+                guard let token = response.token, let bundle = response.bundle else {
+                    failure = "Spotify sign-in didn't finish. Try again."
+                    return
+                }
+                model.completeSignIn(token: token, bundle: bundle)
+                state = .linked(response.account)
+            }
             onChange?(true)
         } catch APIError.server(let status, _) where status == 403 {
             failure = "This Spotify account isn't on Resonote's allowlist yet."

@@ -45,9 +45,16 @@ struct EntryDetailView: View {
             }
         }
         .paperBackground()
-        .navigationTitle("Entry")
+        .navigationTitle("Note")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let entry, !isDeleting, isOwner(entry) || entry.isPublic, !isAuthorBlocked(entry) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    ShareLink(item: shareText(entry), subject: Text(shareSubject(entry))) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                }
+            }
             if let entry, isOwner(entry), !isDeleting {
                 ToolbarItem(placement: .topBarTrailing) { ownerMenu(entry) }
             } else if let entry, model.isSignedIn, !isOwner(entry), !entry.profileId.isEmpty, entry.isPublic {
@@ -70,6 +77,29 @@ struct EntryDetailView: View {
             if let fresh, !isDeleting { retained = fresh }
         }
         .task(id: router.sheet == nil) { refreshDraftState() }
+    }
+
+    /// The note as plain text: its title, the writing, and what it's about.
+    /// Blocked writing is hidden here, so it can't be shared either.
+    private func isAuthorBlocked(_ entry: JournalEntry) -> Bool {
+        guard let author = model.author(of: entry) else { return false }
+        return model.isBlocked(author.id)
+    }
+
+    private func shareText(_ entry: JournalEntry) -> String {
+        let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let body = entry.plainText.trimmingCharacters(in: .whitespacesAndNewlines)
+        var parts = [title, body].filter { !$0.isEmpty }
+        if let entity = model.catalog.entity(kind: entry.entityKind, id: entry.entityId) {
+            let subtitle = model.catalog.subtitle(for: entity)
+            parts.append("— on \(entity.name)" + (subtitle.isEmpty ? "" : " (\(subtitle))"))
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    private func shareSubject(_ entry: JournalEntry) -> String {
+        let title = entry.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return title.isEmpty ? "A note from Resonote" : title
     }
 
     private func isOwner(_ entry: JournalEntry) -> Bool {

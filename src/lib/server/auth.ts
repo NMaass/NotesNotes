@@ -20,8 +20,10 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** A deliverable-looking address. `.invalid` is refused: Sign in with Spotify accounts use it as a placeholder no code may open. */
 export function isValidEmail(email: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeEmail(email));
+  const normalized = normalizeEmail(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized) && !normalized.endsWith('.invalid');
 }
 
 function isoAt(offsetMs: number): string {
@@ -124,7 +126,7 @@ export async function consumeLoginCode(email: string, code: string): Promise<Cod
   return 'ok';
 }
 
-async function ensureUserAndProfile(email: string): Promise<{ userId: string; handle: string }> {
+async function ensureUserAndProfile(email: string, nameHint?: string): Promise<{ userId: string; handle: string }> {
   const normalized = normalizeEmail(email);
   let user = await first<{ id: string }>('select id from users where email = ?', normalized);
   if (!user) {
@@ -134,7 +136,7 @@ async function ensureUserAndProfile(email: string): Promise<{ userId: string; ha
   }
   let profile = await first<{ handle: string }>('select handle from profiles where id = ?', user.id);
   if (!profile) {
-    const base = slugifyHandle(normalized.split('@')[0] ?? 'listener') || 'listener';
+    const base = slugifyHandle(nameHint || (normalized.split('@')[0] ?? 'listener')) || 'listener';
     let handle = base;
     for (let attempt = 2; await first('select id from profiles where handle = ?', handle); attempt += 1) {
       handle = `${base}${attempt}`;
@@ -162,8 +164,19 @@ export interface StartedSession {
  * sessions (`mode: 'native'`) return the token to the caller instead and never
  * set a cookie. Both are the same `sessions` rows, so expiry and sign-out match.
  */
-export async function startSession(email: string, mode: 'cookie' | 'native' = 'cookie'): Promise<StartedSession> {
-  const { userId, handle } = await ensureUserAndProfile(email);
+export async function startSession(email: string, mode: 'cookie' | 'native' = 'cookie', nameHint?: string): Promise<StartedSession> {
+  const { userId, handle } = await ensureUserAndProfile(email, nameHint);
+  return openSession(userId, handle, mode);
+}
+
+/** A native session for a user who already exists (Sign in with Spotify on a linked account). */
+export async function startSessionForUser(userId: string): Promise<StartedSession | null> {
+  const profile = await first<{ handle: string }>('select handle from profiles where id = ?', userId);
+  if (!profile) return null;
+  return openSession(userId, profile.handle, 'native');
+}
+
+async function openSession(userId: string, handle: string, mode: 'cookie' | 'native'): Promise<StartedSession> {
   const token = randomBytes(32).toString('hex');
   const expiresAt = isoAt(SESSION_TTL_DAYS * 86_400_000);
   await run('insert into sessions (id, user_id, expires_at) values (?, ?, ?)', sha256(token), userId, expiresAt);

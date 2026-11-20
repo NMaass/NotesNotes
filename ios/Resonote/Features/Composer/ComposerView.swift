@@ -73,13 +73,7 @@ private struct ComposerForm: View {
                     ComposerEditorSurface(session: session, subjectName: subjectName ?? "this \(context.entityKind.rawValue)", focus: $focus)
                         .id(Self.editorAnchor)
                     ComposerLinkedMusic(session: session) { describing = ReferenceEditTarget(id: $0) }
-                    ComposerLensSection(session: session)
                     ComposerReflections(session: session, focus: $focus)
-                    ComposerVisibility(session: session)
-                    Text("Drafts stay on this device until you save.")
-                        .font(.footnote)
-                        .foregroundStyle(RN.Palette.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, RN.Space.gutter)
                 .padding(.top, RN.Space.s)
@@ -90,7 +84,7 @@ private struct ComposerForm: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 ComposerSuggestionHost(session: session, isWriting: focus == .body)
             }
-            .navigationTitle(session.isEditingPublishedEntry ? "Edit entry" : "New entry")
+            .navigationTitle(session.isEditingPublishedEntry ? "Edit note" : "New note")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { toolbar(proxy: proxy) }
         }
@@ -114,20 +108,37 @@ private struct ComposerForm: View {
 
     @ToolbarContentBuilder
     private func toolbar(proxy: ScrollViewProxy) -> some ToolbarContent {
+        // The iOS 26 sheet pattern: a glass X closes (the draft stays), a filled checkmark saves.
         ToolbarItem(placement: .cancellationAction) {
-            Button("Cancel") {
+            Button(role: .cancel) {
                 session.saveDraftNow()
                 dismiss()
+            } label: {
+                Label("Close", systemImage: "xmark")
             }
+            .accessibilityHint("Keeps your draft on this device")
         }
         ToolbarItem(placement: .confirmationAction) {
             Button {
                 publish(proxy: proxy)
             } label: {
-                StableLabel(session.isPublic ? VisibilityCopy.publicLabel : "Save", among: ["Save", VisibilityCopy.publicLabel])
+                Label(session.isPublic ? VisibilityCopy.publicLabel : "Save", systemImage: "checkmark")
             }
             .buttonStyle(.glassProminent)
-            .accessibilityLabel(session.isPublic ? "Publish entry" : "Save privately")
+            .accessibilityLabel(session.isPublic ? "Publish note" : "Save privately")
+        }
+        // The thin bottom bar: link music, lenses, and who can read it.
+        ToolbarItemGroup(placement: .bottomBar) {
+            Button {
+                focus = .body
+                session.beginReference()
+            } label: {
+                Label("Link music", systemImage: "music.note")
+            }
+            .accessibilityHint("Starts a link to a song, album, artist, or genre at the cursor.")
+            ComposerLensMenu(session: session)
+            Spacer()
+            ComposerVisibilityToggle(session: session)
         }
         ToolbarItemGroup(placement: .keyboard) {
             if focus == .body {

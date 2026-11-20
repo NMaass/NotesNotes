@@ -241,3 +241,78 @@ struct VinylView: View {
         }
     }
 }
+
+/// The record with its tonearm: the arm rests in the grooves while the source confirms
+/// playback and swings off the record when it stops. The record holds its angle when
+/// paused (`VinylView`), and its shadow sits on a separate disc that never turns.
+struct RecordPlayerView: View {
+    let artworkURL: String?
+    let title: String
+    let isPlaying: Bool
+    var size: CGFloat = 280
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            Circle()
+                .fill(RN.Palette.disc)
+                .frame(width: size, height: size)
+                .shadow(color: .black.opacity(0.5), radius: size * 0.08, y: size * 0.05)
+            VinylView(artworkURL: artworkURL, title: title, isPlaying: isPlaying, size: size)
+            TonearmView(size: size)
+                .rotationEffect(.degrees(isPlaying ? 0 : -24), anchor: TonearmView.pivot)
+                .frame(width: size * TonearmView.widthRatio, height: size * TonearmView.heightRatio)
+                .offset(x: size * (Self.widthRatio - TonearmView.widthRatio))
+                .animation(reduceMotion ? nil : RN.Motion.arm, value: isPlaying)
+                .accessibilityHidden(true)
+        }
+        .frame(width: size * Self.widthRatio, height: size, alignment: .topLeading)
+    }
+
+    /// The arm's pivot sits just past the record's right edge.
+    static let widthRatio: CGFloat = 1.12
+}
+
+/// A drawn tonearm: pivot base and counterweight at the top right, a bent arm, and the
+/// headshell resting in the record's grooves.
+private struct TonearmView: View {
+    let size: CGFloat
+
+    static let widthRatio: CGFloat = 0.42
+    static let heightRatio: CGFloat = 0.86
+    /// Pivot in unit coordinates of this view's frame.
+    static let pivot = UnitPoint(x: 0.72, y: 0.1 / heightRatio)
+
+    var body: some View {
+        Canvas { context, canvasSize in
+            let w = canvasSize.width
+            let h = canvasSize.height
+            let pivot = CGPoint(x: w * Self.pivot.x, y: h * Self.pivot.y)
+            let elbow = CGPoint(x: w * 0.62, y: h * 0.70)
+            let head = CGPoint(x: w * 0.18, y: h * 0.92)
+            let unit = size
+
+            var counterweight = Path()
+            counterweight.addRoundedRect(in: CGRect(x: pivot.x - unit * 0.035, y: pivot.y - unit * 0.1, width: unit * 0.07, height: unit * 0.06), cornerSize: CGSize(width: unit * 0.012, height: unit * 0.012))
+            context.fill(counterweight, with: .color(RN.Palette.paper3))
+
+            var arm = Path()
+            arm.move(to: pivot)
+            arm.addLine(to: elbow)
+            arm.addLine(to: head)
+            context.stroke(arm, with: .color(RN.Palette.ink.opacity(0.78)), style: StrokeStyle(lineWidth: unit * 0.017, lineCap: .round, lineJoin: .round))
+
+            let base = Path(ellipseIn: CGRect(x: pivot.x - unit * 0.07, y: pivot.y - unit * 0.07, width: unit * 0.14, height: unit * 0.14))
+            context.fill(base, with: .color(RN.Palette.paper3))
+            context.stroke(base, with: .color(RN.Palette.lineStrong), lineWidth: 1)
+            let hub = Path(ellipseIn: CGRect(x: pivot.x - unit * 0.028, y: pivot.y - unit * 0.028, width: unit * 0.056, height: unit * 0.056))
+            context.fill(hub, with: .color(RN.Palette.muted))
+
+            let shell = Path(roundedRect: CGRect(x: head.x - unit * 0.045, y: head.y - unit * 0.022, width: unit * 0.09, height: unit * 0.044), cornerRadius: unit * 0.01)
+            context.fill(shell.applying(CGAffineTransform(translationX: -head.x, y: -head.y).concatenating(CGAffineTransform(rotationAngle: -0.7)).concatenating(CGAffineTransform(translationX: head.x, y: head.y))), with: .color(RN.Palette.ink))
+            let stylus = Path(ellipseIn: CGRect(x: head.x - unit * 0.009, y: head.y - unit * 0.009, width: unit * 0.018, height: unit * 0.018))
+            context.fill(stylus, with: .color(RN.Palette.rust))
+        }
+    }
+}

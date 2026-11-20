@@ -92,6 +92,17 @@ export async function linkedSpotify(profileId: string): Promise<LinkedSpotify | 
   }
 }
 
+/** The Resonote profile a Spotify account is linked to, or null. */
+export async function profileForSpotifyUser(spotifyUserId: string): Promise<string | null> {
+  try {
+    const row = await first<{ profile_id: string }>('select profile_id from spotify_accounts where spotify_user_id = ? order by linked_at desc limit 1', spotifyUserId);
+    return row ? String(row.profile_id) : null;
+  } catch (error) {
+    if (/no such table/i.test(error instanceof Error ? error.message : String(error))) return null;
+    throw error;
+  }
+}
+
 /** Links (or relinks) the caller's Spotify account. Returns the stored link time. */
 export async function saveLinkedSpotify(
   profileId: string,

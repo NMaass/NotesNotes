@@ -1,46 +1,59 @@
 import ResonoteKit
 import SwiftUI
 
-/// "You're listening to X — want to write about it?" The card's geometry is the
-/// same whether a track is known, still being looked for, or nothing is playing:
-/// every state is laid out in the same slots and only the visible layer changes.
+/// The Now tab's hero: the record and its tonearm, the song, one status line, and one
+/// primary action. Every state (a track, still looking, nothing playing) uses the same
+/// slots and only the visible layer changes, so nothing below it moves. Secondary
+/// actions live in `NowActionsMenu` in the navigation bar.
 struct NowPlayingCard: View {
     @Environment(AppModel.self) private var model
     @Environment(Router.self) private var router
     @Environment(NowPlayingService.self) private var nowPlaying
-    @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private enum Mode: Equatable { case track, looking, nothing }
 
-    private static let vinylSize: CGFloat = 104
+    private static let recordSize: CGFloat = 270
     private static let playSize: CGFloat = 40
-    private static let chipLimit = 6
 
     private var mode: Mode {
         if nowPlaying.track != nil { return .track }
-        return nowPlaying.phase == .nothing ? .nothing : .looking
+        // With no source connected there is nothing to check, so the connect buttons
+        // show from the first frame instead of after a "Checking your sources…" pause.
+        let hasSource = nowPlaying.isAppleMusicOn || nowPlaying.linkedSources.hasRemote
+        return nowPlaying.phase == .nothing || !hasSource ? .nothing : .looking
     }
 
     var body: some View {
         let mode = self.mode
         let track = nowPlaying.track
-        VStack(alignment: .leading, spacing: RN.Space.m) {
+        VStack(alignment: .leading, spacing: RN.Space.l) {
+            RecordPlayerView(
+                artworkURL: nowPlaying.nowArtworkURL,
+                title: track?.title ?? "",
+                isPlaying: track != nil && nowPlaying.isConfirmedPlaying,
+                size: Self.recordSize
+            )
+            .accessibilityHidden(track == nil)
+            .padding(.top, RN.Space.s)
+
             heading(mode: mode, track: track)
-                .padding(.bottom, RN.Space.xs)
             statusLine(mode: mode)
             ZStack(alignment: .topLeading) {
-                trackActions
-                    .redacted(reason: mode == .looking ? .placeholder : [])
-                    .disabled(mode != .track)
-                    .nowStateLayer(visible: mode != .nothing, accessible: mode == .track)
-                nothingActions
+                Button {
+                    router.present(.capture(CapturePreset(origin: "now")))
+                } label: {
+                    Text("Write about this")
+                }
+                .buttonStyle(.solid)
+                .disabled(mode != .track)
+                .nowStateLayer(visible: mode != .nothing, accessible: mode == .track)
+
+                nothingAction
                     .nowStateLayer(visible: mode == .nothing)
             }
         }
-        .padding(RN.Space.l)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .cardSurface()
         .animation(reduceMotion ? nil : RN.Motion.settle, value: mode)
         .task(id: model.hasLiveSession) { await matchAfterSignIn() }
     }
@@ -48,44 +61,43 @@ struct NowPlayingCard: View {
     // MARK: Heading
 
     private func heading(mode: Mode, track: NowPlayingTrack?) -> some View {
-        let layout = typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: RN.Space.m))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: RN.Space.l))
-        let artwork = nowPlaying.nowArtworkURL
-        return layout {
-            VinylView(artworkURL: artwork, title: track?.title ?? "", isPlaying: track != nil && nowPlaying.isConfirmedPlaying, size: Self.vinylSize)
-                .accessibilityHidden(track == nil)
-            ZStack(alignment: .leading) {
-                NowTitleBlock(title: track?.title ?? "Song title", subtitle: track == nil ? "Artist · Album" : nowPlaying.byline(catalog: model.catalog)) {
-                    if let track {
-                        NowSourceText(track: track)
-                    } else {
-                        Text("Apple Music · playing")
-                    }
+        ZStack(alignment: .leading) {
+            NowTitleBlock(title: track?.title ?? "Song title", subtitle: track == nil ? "Artist · Album" : nowPlaying.byline(catalog: model.catalog)) {
+                if let track {
+                    NowSourceText(track: track)
+                } else {
+                    Text("Apple Music · playing")
                 }
-                .redacted(reason: mode == .looking ? .placeholder : [])
-                .padding(.trailing, Self.playSize + RN.Space.s)
-                .nowStateLayer(visible: mode != .nothing, accessible: mode == .track)
-
-                // Play sits at the title's trailing edge, in the same slot in every state.
-                PlayIconButton(target: playTarget, size: Self.playSize)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                    .nowStateLayer(visible: mode == .track)
-
-                VStack(alignment: .leading, spacing: RN.Space.xs) {
-                    Text("Nothing playing that Resonote can see.")
-                        .font(RN.Typography.headline)
-                        .foregroundStyle(RN.Palette.ink)
-                    Text("Play something in Apple Music, connect Spotify or Last.fm, or let Resonote listen.")
-                        .font(.subheadline)
-                        .foregroundStyle(RN.Palette.muted)
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityElement(children: .combine)
-                .nowStateLayer(visible: mode == .nothing)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .redacted(reason: mode == .looking ? .placeholder : [])
+            .padding(.trailing, Self.playSize + RN.Space.s)
+            .nowStateLayer(visible: mode != .nothing, accessible: mode == .track)
+
+            // Play sits at the title's trailing edge, in the same slot in every state.
+            PlayIconButton(target: playTarget, size: Self.playSize)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .nowStateLayer(visible: mode == .track)
+
+            VStack(alignment: .leading, spacing: RN.Space.xs) {
+                Text("Nothing playing")
+                    .font(RN.Typography.headline)
+                    .foregroundStyle(RN.Palette.ink)
+                Text(nothingMessage)
+                    .font(.subheadline)
+                    .foregroundStyle(RN.Palette.muted)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityElement(children: .combine)
+            .nowStateLayer(visible: mode == .nothing)
         }
+    }
+
+    private var nothingMessage: String {
+        if let failure = nowPlaying.spotify.failure { return failure }
+        if nowPlaying.canOfferSpotify || !nowPlaying.isAppleMusicOn {
+            return "Connect where you listen, and the song you're playing shows up here."
+        }
+        return "Play something and it shows up here."
     }
 
     // MARK: Status
@@ -142,181 +154,26 @@ struct NowPlayingCard: View {
         return PlaybackTarget(track: track)
     }
 
-    // MARK: With a track
-
-    private var trackActions: some View {
-        let song = nowPlaying.song
-        return VStack(alignment: .leading, spacing: RN.Space.m) {
-            Button {
-                router.present(.capture(CapturePreset(origin: "now")))
-            } label: {
-                Label("Write about this", systemImage: "square.and.pencil")
-            }
-            .buttonStyle(.solid)
-
-            secondaryLayout {
-                Button {
-                    guard let song else { return }
-                    model.requireAuth { router.present(.logListen(songId: song.id)) }
-                } label: {
-                    Label("Log listen", systemImage: "headphones")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.outline)
-                .disabled(song == nil)
-
-                Button {
-                    guard let song else { return }
-                    router.push(.entity(kind: .song, id: song.id))
-                } label: {
-                    Label("Open song", systemImage: "arrow.up.right")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.outline)
-                .disabled(song == nil)
-            }
-
-            suggestionChips
-
-            otherSongRow
-        }
-    }
-
-    /// The song shown may be an old or paused one: listen for what's actually playing, or
-    /// note a song copied from another app. One fixed-height row in every state.
-    private var otherSongRow: some View {
-        HStack(spacing: RN.Space.m) {
-            // Another app is audible and nothing vouches for this song: say so, louder.
-            if AppFeatures.identify {
-                Button {
-                    router.present(.identify)
-                } label: {
-                    Label(nowPlaying.suggestsIdentify ? "Something else playing? Identify" : "Not this song? Identify", systemImage: "waveform")
-                        .font(.subheadline.weight(nowPlaying.suggestsIdentify ? .semibold : .medium))
-                        .foregroundStyle(nowPlaying.suggestsIdentify ? RN.Palette.rustText : Color.accentColor)
-                }
-                .buttonStyle(.borderless)
-                .disabled(nowPlaying.isIdentifying)
-                .accessibilityHint("Listens for the song playing nearby")
-            }
-            Spacer(minLength: 0)
-            PasteButton(payloadType: URL.self, onPaste: NowPaste.handler { [router, nowPlaying] url in
-                nowPlaying.dismissCopiedLink()
-                router.present(.resolveLink(url.absoluteString))
-            })
-            .buttonBorderShape(.capsule)
-            .labelStyle(.titleAndIcon)
-            .nowStateLayer(visible: nowPlaying.copiedLinkAvailable)
-        }
-        .frame(minHeight: 34)
-    }
-
-    private var secondaryLayout: AnyLayout {
-        typeSize.isAccessibilitySize
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: RN.Space.s))
-            : AnyLayout(HStackLayout(spacing: RN.Space.s))
-    }
-
-    // MARK: Suggestions
-
-    private struct SuggestionChip: Identifiable {
-        let id: String
-        let title: String
-        let preset: CapturePreset
-    }
-
-    /// Lenses, moods, and genres interleaved, so whatever fits on one line is varied.
-    private var chips: [SuggestionChip] {
-        let suggestions = nowPlaying.suggestions
-        let groups: [[SuggestionChip]] = [
-            suggestions.lenses.map { SuggestionChip(id: "lens-\($0.rawValue)", title: $0.rawValue, preset: CapturePreset(lens: $0, origin: "now")) },
-            suggestions.moods.map { SuggestionChip(id: "mood-\($0)", title: $0, preset: CapturePreset(mood: $0, origin: "now")) },
-            suggestions.genres.map { SuggestionChip(id: "genre-\($0.id)", title: $0.name, preset: CapturePreset(genreId: $0.id, origin: "now")) },
-        ]
-        var result: [SuggestionChip] = []
-        var seen = Set<String>()
-        let depth = groups.map(\.count).max() ?? 0
-        for index in 0..<depth {
-            for group in groups where index < group.count && seen.insert(group[index].id).inserted {
-                result.append(group[index])
-            }
-        }
-        return Array(result.prefix(Self.chipLimit))
-    }
-
-    /// One line of chips: as many as fit (up to six), never wrapping.
-    private var suggestionChips: some View {
-        let chips = self.chips
-        return ViewThatFits(in: .horizontal) {
-            chipLine(chips, count: 6)
-            chipLine(chips, count: 5)
-            chipLine(chips, count: 4)
-            chipLine(chips, count: 3)
-            chipLine(chips, count: 2)
-            chipLine(chips, count: 1)
-        }
-        .frame(minHeight: 34, alignment: .leading)
-    }
-
-    private func chipLine(_ chips: [SuggestionChip], count: Int) -> some View {
-        HStack(spacing: RN.Space.s) {
-            ForEach(chips.prefix(count)) { chip in
-                Chip(chip.title) {
-                    router.present(.capture(chip.preset))
-                }
-                .accessibilityHint("Starts a note with this tag")
-            }
-        }
-    }
-
     // MARK: Nothing playing
 
-    private var nothingActions: some View {
-        VStack(alignment: .leading, spacing: RN.Space.m) {
-            Button {
-                router.present(.identify)
-            } label: {
-                Label("Identify", systemImage: "waveform")
+    /// When nothing is playing: one full-width pill for each source not yet connected,
+    /// stacked in the slot the Write button keeps. Identify lives in the bar above the tabs.
+    @ViewBuilder
+    private var nothingAction: some View {
+        let spotify = nowPlaying.canOfferSpotify
+        let appleMusic = !nowPlaying.isAppleMusicOn
+        if spotify || appleMusic {
+            VStack(spacing: RN.Space.m) {
+                if spotify {
+                    SpotifySignInButton(title: "Continue with Spotify", onGreen: true)
+                        .buttonStyle(.spotifyPill)
+                }
+                if appleMusic {
+                    AppleMusicConnectButton(title: "Continue with Apple Music")
+                        .buttonStyle(.applePill)
+                }
             }
-            .buttonStyle(.solid)
-            .accessibilityHint("Listens for the song playing nearby")
-
-            Button {
-                router.push(.settings)
-            } label: {
-                Label("Connect a source", systemImage: "link")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.outline)
-
-            copiedLinkRow
         }
-    }
-
-    /// The copied-link row, or a hint in its place. The system paste button reads the
-    /// clipboard only when tapped, so iOS never shows a paste prompt.
-    private var copiedLinkRow: some View {
-        ZStack(alignment: .leading) {
-            Text("Or share a song to Resonote from Spotify, Apple Music, or YouTube Music.")
-                .font(.footnote)
-                .foregroundStyle(RN.Palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-                .nowStateLayer(visible: !nowPlaying.copiedLinkAvailable)
-            HStack(spacing: RN.Space.m) {
-                Text("Note the song you copied")
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(RN.Palette.ink)
-                Spacer(minLength: 0)
-                PasteButton(payloadType: URL.self, onPaste: NowPaste.handler { [router, nowPlaying] url in
-                    nowPlaying.dismissCopiedLink()
-                    router.present(.resolveLink(url.absoluteString))
-                })
-                .buttonBorderShape(.capsule)
-                .labelStyle(.titleAndIcon)
-            }
-            .nowStateLayer(visible: nowPlaying.copiedLinkAvailable)
-        }
-        .frame(minHeight: 34)
     }
 
     // MARK: Matching
@@ -326,5 +183,67 @@ struct NowPlayingCard: View {
     private func matchAfterSignIn() async {
         guard model.hasLiveSession, nowPlaying.track != nil, nowPlaying.resolution == nil, nowPlaying.phase == .unmatched else { return }
         await nowPlaying.resolveCurrent()
+    }
+}
+
+/// The Now tab's secondary actions, in one menu in the navigation bar.
+struct NowActionsMenu: View {
+    @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
+    @Environment(NowPlayingService.self) private var nowPlaying
+
+    var body: some View {
+        let song = nowPlaying.song
+        Menu {
+            if let song {
+                Button {
+                    model.requireAuth { router.present(.logListen(songId: song.id)) }
+                } label: {
+                    Label("Log listen", systemImage: "headphones")
+                }
+                Button {
+                    router.push(.entity(kind: .song, id: song.id))
+                } label: {
+                    Label("Open song", systemImage: "arrow.up.right")
+                }
+            }
+            if AppFeatures.identify {
+                Button {
+                    router.present(.identify)
+                } label: {
+                    Label(nowPlaying.track == nil ? "Identify" : "Not this song? Identify", systemImage: "waveform")
+                }
+                .disabled(nowPlaying.isIdentifying)
+            }
+            Divider()
+            Button {
+                router.push(.feed)
+            } label: {
+                Label("Published by others", systemImage: "text.book.closed")
+            }
+            Button {
+                router.push(.settings)
+            } label: {
+                Label("Sources and settings", systemImage: "gearshape")
+            }
+        } label: {
+            Label("More", systemImage: "ellipsis")
+        }
+    }
+}
+
+/// Notes a song link copied from another app. The system paste button reads the
+/// clipboard only when tapped, so iOS never shows a paste prompt.
+struct NowPasteButton: View {
+    @Environment(Router.self) private var router
+    @Environment(NowPlayingService.self) private var nowPlaying
+
+    var body: some View {
+        PasteButton(payloadType: URL.self, onPaste: NowPaste.handler { [router, nowPlaying] url in
+            nowPlaying.dismissCopiedLink()
+            router.present(.resolveLink(url.absoluteString))
+        })
+        .buttonBorderShape(.capsule)
+        .labelStyle(.iconOnly)
     }
 }

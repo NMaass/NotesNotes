@@ -8,7 +8,6 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(\.openURL) private var openURL
-    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
 
     private enum SourceField: Hashable { case lastfm, listenbrainz }
 
@@ -16,21 +15,17 @@ struct SettingsView: View {
     /// What the person is typing; nil shows the saved value.
     @State private var lastfmDraft: String?
     @State private var listenbrainzDraft: String?
-    @State private var isRequestingAppleMusic = false
     @State private var confirmSignOut = false
     @State private var unsyncedWrites = 0
     @State private var confirmDeleteAccount = false
     @State private var isDeletingAccount = false
     @State private var deleteError: String?
-    @State private var isSigningInToLastfm = false
     @State private var confirmUnlinkLastfm = false
-    @State private var isSigningInToSpotify = false
     @State private var confirmUnlinkSpotify = false
 
     var body: some View {
         Form {
             sourcesSection
-            spotifySection
             if AppFeatures.identify { identifySection }
             widgetsSection
             if !model.blockedProfiles.isEmpty {
@@ -51,15 +46,15 @@ struct SettingsView: View {
             async let spotify: Void = nowPlaying.spotify.load()
             _ = await (lastfm, spotify)
         }
-        .confirmationDialog("Unlink Spotify?", isPresented: $confirmUnlinkSpotify, titleVisibility: .visible) {
-            Button("Unlink", role: .destructive) { Task { await nowPlaying.spotify.unlink() } }
-            Button("Keep it linked", role: .cancel) {}
+        .confirmationDialog("Disconnect Spotify?", isPresented: $confirmUnlinkSpotify, titleVisibility: .visible) {
+            Button("Disconnect", role: .destructive) { Task { await nowPlaying.spotify.unlink() } }
+            Button("Keep it", role: .cancel) {}
         } message: {
             Text("Resonote stops reading your Spotify listening and can't play songs there. You can sign in again any time.")
         }
-        .confirmationDialog("Unlink Last.fm?", isPresented: $confirmUnlinkLastfm, titleVisibility: .visible) {
-            Button("Unlink", role: .destructive) { Task { await nowPlaying.lastfm.unlink() } }
-            Button("Keep it linked", role: .cancel) {}
+        .confirmationDialog("Disconnect Last.fm?", isPresented: $confirmUnlinkLastfm, titleVisibility: .visible) {
+            Button("Disconnect", role: .destructive) { Task { await nowPlaying.lastfm.unlink() } }
+            Button("Keep it", role: .cancel) {}
         } message: {
             Text("Resonote stops reading your scrobbles. You can sign in again any time.")
         }
@@ -79,151 +74,48 @@ struct SettingsView: View {
 
     // MARK: Listening sources
 
+    /// Where you listen: Spotify and Apple Music, each one row that connects in one tap
+    /// or shows that it's connected. Last.fm and ListenBrainz appear only for someone
+    /// who already linked them, so they can see and undo it.
     private var sourcesSection: some View {
-        Section {
-            appleMusicRow
-            if nowPlaying.appleMusicAccess == .denied {
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+        let spotify = nowPlaying.spotify
+        return Section {
+            if let account = spotify.account {
+                LabeledContent("Spotify") {
+                    Text(account.name)
+                        .foregroundStyle(RN.Palette.muted)
                 }
-                .accessibilityHint("Opens Resonote in the Settings app to allow Apple Music")
+                .accessibilityLabel("Spotify, connected as \(account.name)")
+                Button("Disconnect Spotify", role: .destructive) { confirmUnlinkSpotify = true }
+                    .disabled(spotify.isWorking)
+            } else if nowPlaying.canOfferSpotify {
+                SpotifySignInButton(title: "Sign in with Spotify")
             }
-            lastfmRows
-            usernameField("ListenBrainz", field: .listenbrainz, text: listenbrainzBinding)
-        } header: {
-            Text("Listening sources")
-        } footer: {
-            VStack(alignment: .leading, spacing: RN.Space.s) {
-                if let failure = nowPlaying.lastfm.failure {
-                    Text(failure)
-                        .foregroundStyle(RN.Palette.rustText)
-                }
-                if !model.isSignedIn, nowPlaying.linkedSources.hasRemote {
-                    Text("Sign in to read Spotify, Last.fm, and ListenBrainz.")
-                }
-                Text("Resonote reads your recent listens from these so you rarely have to name a song. YouTube Music: share a song to Resonote, or tap Identify — Shazam can hear what's playing, even in AirPods.")
+            if nowPlaying.isAppleMusicOn {
+                LabeledContent("Apple Music", value: "Connected")
+                Button("Disconnect Apple Music", role: .destructive) { nowPlaying.disableAppleMusic() }
+            } else {
+                AppleMusicConnectButton(title: nowPlaying.appleMusicAccess == .denied ? "Allow Apple Music in Settings" : "Use Apple Music")
             }
-        }
-        .listRowBackground(RN.Palette.paper2)
-    }
-
-    // MARK: Last.fm
-
-    @ViewBuilder
-    private var lastfmRows: some View {
-        let link = nowPlaying.lastfm
-        if let account = link.account {
-            LabeledContent("Last.fm") {
-                Text(account.username)
-                    .foregroundStyle(RN.Palette.muted)
-            }
-            .accessibilityLabel("Last.fm, linked as \(account.username)")
-            Button("Unlink Last.fm", role: .destructive) { confirmUnlinkLastfm = true }
-                .disabled(link.isWorking)
-        } else {
-            if link.state != .notConfigured {
-                Button {
-                    signInToLastfm()
-                } label: {
-                    StableLabel(isSigningInToLastfm || link.isWorking ? "Signing in to Last.fm…" : "Sign in with Last.fm", among: ["Sign in with Last.fm", "Signing in to Last.fm…"])
-                }
-                .disabled(!model.hasLiveSession || isSigningInToLastfm || link.isWorking)
-                .accessibilityHint("Opens Last.fm to let Resonote read your scrobbles")
-            }
-            // Without web auth on this server, or for a username typed before it existed.
-            if link.state == .notConfigured || nowPlaying.linkedSources.lastfmUser != nil {
+            if let account = nowPlaying.lastfm.account {
+                LabeledContent("Last.fm", value: account.username)
+                Button("Disconnect Last.fm", role: .destructive) { confirmUnlinkLastfm = true }
+                    .disabled(nowPlaying.lastfm.isWorking)
+            } else if nowPlaying.linkedSources.lastfmUser != nil {
                 usernameField("Last.fm", field: .lastfm, text: lastfmBinding)
             }
-        }
-    }
-
-    /// Last.fm web auth: the server hands out the approval page, Last.fm redirects to
-    /// `resonote://lastfm-auth?token=…`, and the server exchanges the token for a session.
-    private func signInToLastfm() {
-        isSigningInToLastfm = true
-        Task {
-            defer { isSigningInToLastfm = false }
-            guard let auth = await nowPlaying.lastfm.authURL() else { return }
-            do {
-                let callback = try await webAuthenticationSession.authenticate(using: auth.url, callbackURLScheme: auth.callbackScheme)
-                await nowPlaying.lastfm.finish(callback: callback)
-                lastfmDraft = nil
-            } catch {
-                // Closing the Last.fm page is a choice, not an error.
-            }
-        }
-    }
-
-    // MARK: Spotify
-
-    private var spotifySection: some View {
-        let link = nowPlaying.spotify
-        return Section {
-            if let account = link.account {
-                LabeledContent("Spotify") {
-                    VStack(alignment: .trailing, spacing: 2) {
-                        Text(account.name)
-                            .foregroundStyle(RN.Palette.muted)
-                        Text(account.canPlay ? "Premium · plays songs here" : "Plays need Spotify Premium")
-                            .font(.footnote)
-                            .foregroundStyle(RN.Palette.muted)
-                    }
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("Spotify, linked as \(account.name). \(account.canPlay ? "Premium, plays songs here." : "Playing needs Spotify Premium.")")
-                Button("Unlink Spotify", role: .destructive) { confirmUnlinkSpotify = true }
-                    .disabled(link.isWorking)
-            } else if link.state != .notConfigured {
-                Button {
-                    signInToSpotify()
-                } label: {
-                    StableLabel(isSigningInToSpotify || link.isWorking ? "Signing in to Spotify…" : "Sign in with Spotify", among: ["Sign in with Spotify", "Signing in to Spotify…"])
-                }
-                .disabled(!model.hasLiveSession || isSigningInToSpotify || link.isWorking)
-                .accessibilityHint("Opens Spotify to let Resonote read your listening and play songs")
-            }
-            if link.account == nil {
-                Link(destination: SourceLinks.lastfmApplications) {
-                    AboutLinkRow(title: "Connect Spotify to Last.fm")
-                }
-                Link(destination: SourceLinks.listenbrainzServices) {
-                    AboutLinkRow(title: "Connect Spotify to ListenBrainz")
-                }
+            if nowPlaying.linkedSources.listenbrainzUser != nil {
+                usernameField("ListenBrainz", field: .listenbrainz, text: listenbrainzBinding)
             }
         } header: {
-            Text("Spotify")
+            Text("Where you listen")
         } footer: {
-            VStack(alignment: .leading, spacing: RN.Space.s) {
-                if let failure = link.failure {
-                    Text(failure)
-                        .foregroundStyle(RN.Palette.rustText)
-                }
-                if link.account != nil {
-                    Text("Resonote reads what you play on Spotify and, with Premium, plays songs on your Spotify when you tap Play.")
-                } else if link.state == .notConfigured {
-                    Text("Spotify sign-in isn't set up on this server. Connect Spotify once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them, on every device.")
-                } else {
-                    Text("Spotify sign-in is open only to accounts on Resonote's Spotify allowlist for now. Or connect Spotify once to Last.fm or ListenBrainz and Resonote sees your Spotify listens through them.")
-                }
+            if let failure = spotify.failure ?? nowPlaying.lastfm.failure {
+                Text(failure)
+                    .foregroundStyle(RN.Palette.rustText)
             }
         }
         .listRowBackground(RN.Palette.paper2)
-    }
-
-    /// Spotify sign-in, Authorization Code with PKCE: a fresh verifier and state, Spotify's
-    /// page, then `resonote://spotify-auth?code=…&state=…`, and the server exchanges the code.
-    private func signInToSpotify() {
-        isSigningInToSpotify = true
-        Task {
-            defer { isSigningInToSpotify = false }
-            guard let attempt = await nowPlaying.spotify.begin() else { return }
-            do {
-                let callback = try await webAuthenticationSession.authenticate(using: attempt.url, callbackURLScheme: attempt.callbackScheme)
-                await nowPlaying.spotify.finish(callback: callback, attempt: attempt)
-            } catch {
-                // Closing the Spotify page is a choice, not an error.
-            }
-        }
     }
 
     // MARK: Identify
@@ -246,49 +138,6 @@ struct SettingsView: View {
             Text("This opens the microphone, so the orange dot appears while Resonote listens. Nothing is recorded or kept. Off, Identify waits for you to tap it.")
         }
         .listRowBackground(RN.Palette.paper2)
-    }
-
-    private var appleMusicRow: some View {
-        Toggle(isOn: appleMusicBinding) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Apple Music")
-                Text(appleMusicStatus)
-                    .font(.footnote)
-                    .foregroundStyle(RN.Palette.muted)
-            }
-        }
-        .disabled(nowPlaying.appleMusicAccess == .denied || isRequestingAppleMusic)
-    }
-
-    private var appleMusicBinding: Binding<Bool> {
-        Binding(
-            get: {
-                isRequestingAppleMusic || (nowPlaying.linkedSources.appleMusicEnabled && nowPlaying.appleMusicAccess == .granted)
-            },
-            set: { isOn in
-                if isOn {
-                    isRequestingAppleMusic = true
-                    Task {
-                        await nowPlaying.requestAppleMusicAccess()
-                        isRequestingAppleMusic = false
-                    }
-                } else {
-                    nowPlaying.disableAppleMusic()
-                }
-            }
-        )
-    }
-
-    private var appleMusicStatus: String {
-        if isRequestingAppleMusic { return "Waiting for permission" }
-        switch nowPlaying.appleMusicAccess {
-        case .denied:
-            return "Not allowed. Turn on Media & Apple Music for Resonote in Settings."
-        case .granted where nowPlaying.linkedSources.appleMusicEnabled:
-            return "Sees what the Music app is playing, as it plays."
-        default:
-            return "Off"
-        }
     }
 
     private func usernameField(_ title: String, field: SourceField, text: Binding<String>) -> some View {

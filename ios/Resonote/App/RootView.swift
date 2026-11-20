@@ -5,6 +5,7 @@ import SwiftUI
 /// bar, like the mini player in Music. Every modal goes through `Router.sheet`.
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(NowPlayingService.self) private var nowPlaying
     @Environment(Router.self) private var router
 
     var body: some View {
@@ -27,9 +28,7 @@ struct RootView: View {
             }
         }
         .tabBarMinimizeBehavior(.onScrollDown)
-        .tabViewBottomAccessory {
-            NowPlayingAccessory()
-        }
+        .nowPlayingAccessory(shown: nowPlaying.track != nil || AppFeatures.identify)
         .sheet(item: $router.sheet, onDismiss: { router.sheetDidClose() }) { sheet in
             SheetHost(sheet: sheet)
                 .signInSheet(enabled: true)
@@ -88,6 +87,17 @@ struct SheetHost: View {
 }
 
 extension View {
+    /// The bar above the tab bar. With nothing playing and no Identify, writing starts
+    /// from the "+" in the toolbar instead, so the bar goes away (iOS 26.1 and later).
+    @ViewBuilder
+    func nowPlayingAccessory(shown: Bool) -> some View {
+        if #available(iOS 26.1, *) {
+            tabViewBottomAccessory(isEnabled: shown) { NowPlayingAccessory() }
+        } else {
+            tabViewBottomAccessory { NowPlayingAccessory() }
+        }
+    }
+
     /// Registers every pushable screen on a navigation stack.
     func withRoutes() -> some View {
         navigationDestination(for: Route.self) { route in
@@ -100,6 +110,8 @@ extension View {
                 CollectionView(handle: handle, collectionId: id)
             case .entry(let id):
                 EntryDetailView(entryId: id)
+            case .journalArtist(let id):
+                JournalArtistView(artistId: id)
             case .feed:
                 FeedView()
             case .settings:

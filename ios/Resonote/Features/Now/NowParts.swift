@@ -1,5 +1,7 @@
+import AuthenticationServices
 import ResonoteKit
 import SwiftUI
+import UIKit
 
 // Pieces shared by the Now tab, the now-playing accessory, and the capture sheet.
 
@@ -56,6 +58,41 @@ extension ResolveResponse {
     /// The best cover for a resolved track: the track's own, else the album's, else the song's.
     func nowArtworkURL(for track: NowPlayingTrack?) -> String? {
         track?.artworkURL ?? album?.imageUrl ?? song?.imageUrl
+    }
+}
+
+/// Spotify's icon in its brand green: the green circle with three black sound waves.
+struct SpotifyLogo: View {
+    static let green = Color(red: 30 / 255, green: 215 / 255, blue: 96 / 255)
+
+    /// The circle and the waves. On a green button Spotify's guidelines call for the
+    /// black icon (black circle, green waves).
+    var circle: Color = SpotifyLogo.green
+    var waves: Color = .black
+
+    var body: some View {
+        Canvas { context, size in
+            let side = min(size.width, size.height)
+            let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
+            context.fill(Path(ellipseIn: rect), with: .color(circle))
+            // Three arcs, widest on top, each a little lower and narrower.
+            let arcs: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
+                (0.36, 0.30, 0.10, 0.085),
+                (0.53, 0.25, 0.08, 0.07),
+                (0.68, 0.20, 0.06, 0.06),
+            ]
+            for wave in arcs {
+                var path = Path()
+                let y = rect.minY + side * wave.y
+                path.move(to: CGPoint(x: rect.midX - side * wave.half, y: y))
+                path.addQuadCurve(
+                    to: CGPoint(x: rect.midX + side * wave.half, y: y + side * 0.03),
+                    control: CGPoint(x: rect.midX, y: y - side * wave.lift)
+                )
+                context.stroke(path, with: .color(waves), style: StrokeStyle(lineWidth: side * wave.width, lineCap: .round))
+            }
+        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -295,4 +332,163 @@ extension View {
             .allowsHitTesting(visible)
             .accessibilityHidden(!(accessible ?? visible))
     }
+}
+
+// MARK: - Writing
+
+/// The one "+" for starting a note, in the same top-right spot on Now and Journal.
+struct WriteToolbarButton: View {
+    @Environment(Router.self) private var router
+    let origin: String
+
+    var body: some View {
+        Button {
+            router.present(.capture(CapturePreset(origin: origin)))
+        } label: {
+            Label("Write about a song", systemImage: "plus")
+        }
+    }
+}
+
+// MARK: - Connecting a source
+
+/// The Spotify button: one tap opens Spotify's own sign-in. Signed out, that is the
+/// whole Resonote sign-in too (the server makes or finds the account).
+struct SpotifySignInButton: View {
+    var title = "Spotify"
+    /// On a green pill the logo is black with green waves.
+    var onGreen = false
+
+    @Environment(NowPlayingService.self) private var nowPlaying
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @State private var isSigningIn = false
+
+    private var isBusy: Bool { isSigningIn || nowPlaying.spotify.isWorking }
+
+    var body: some View {
+        Button {
+            signIn()
+        } label: {
+            Label {
+                StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
+            } icon: {
+                SpotifyLogo(circle: onGreen ? .black : SpotifyLogo.green, waves: onGreen ? SpotifyLogo.green : .black)
+                    .frame(width: 24, height: 24)
+            }
+        }
+        .disabled(isBusy)
+        .accessibilityLabel(isBusy ? "Signing in to Spotify" : "Sign in with Spotify")
+        .accessibilityHint("Opens Spotify to let Resonote read your listening and play songs")
+    }
+
+    /// Authorization Code with PKCE: a fresh verifier and state, Spotify's page, then
+    /// `resonote://spotify-auth?code=…&state=…`, and the server exchanges the code.
+    private func signIn() {
+        isSigningIn = true
+        Task {
+            defer { isSigningIn = false }
+            guard let attempt = await nowPlaying.spotify.begin() else { return }
+            do {
+                let callback = try await webAuthenticationSession.authenticate(using: attempt.url, callbackURLScheme: attempt.callbackScheme)
+                await nowPlaying.spotify.finish(callback: callback, attempt: attempt)
+            } catch {
+                // Closing the Spotify page is a choice, not an error.
+            }
+        }
+    }
+}
+
+/// The Apple Music button, with the Apple logo: asks once for Media & Apple Music; if that was refused, opens Settings.
+struct AppleMusicConnectButton: View {
+    var title = "Apple Music"
+
+    @Environment(NowPlayingService.self) private var nowPlaying
+    @Environment(\.openURL) private var openURL
+    @State private var isRequesting = false
+
+    var body: some View {
+        Button {
+            if nowPlaying.appleMusicAccess == .denied {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            } else {
+                isRequesting = true
+                Task {
+                    await nowPlaying.requestAppleMusicAccess()
+                    isRequesting = false
+                }
+            }
+        } label: {
+            Label {
+                StableLabel(isRequesting ? "Asking…" : title, among: [title, "Asking…"])
+            } icon: {
+                // The glyph is narrower than Spotify's circle, so it is set a little
+                // taller to look the same size beside it.
+                Image(systemName: "apple.logo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 24, height: 26)
+            }
+        }
+        .disabled(isRequesting)
+        .accessibilityLabel("Use Apple Music")
+        .accessibilityHint(nowPlaying.appleMusicAccess == .denied
+                           ? "Opens Settings to allow Media and Apple Music for Resonote"
+                           : "Lets Resonote see what the Music app is playing")
+    }
+}
+
+/// The pill buttons for connecting a source, styled like the services' own: Spotify
+/// green with black bold type, and Apple's white-on-dark with black type. Full width,
+/// one height, fully rounded.
+struct SourcePillButtonStyle: ButtonStyle {
+    enum Brand { case spotify, apple }
+    let brand: Brand
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.body.weight(.bold))
+            .labelStyle(SourcePillLabelStyle())
+            .foregroundStyle(Color.black)
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .background(fill.opacity(configuration.isPressed ? 0.85 : 1), in: Capsule())
+            .scaleEffect(configuration.isPressed ? 0.98 : 1)
+            .opacity(isEnabled ? 1 : 0.6)
+    }
+
+    private var fill: Color {
+        switch brand {
+        case .spotify: SpotifyLogo.green
+        case .apple: .white
+        }
+    }
+}
+
+/// The logo pinned at a fixed left inset in a 28 pt box, the title centered on the
+/// button, as Apple's sign-in buttons and most provider stacks do: every logo in a
+/// stack lines up, whatever its label.
+private struct SourcePillLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        ZStack(alignment: .leading) {
+            configuration.title
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .padding(.horizontal, 52)
+                .frame(maxWidth: .infinity)
+            configuration.icon
+                .frame(width: 28, height: 28)
+                .padding(.leading, 18)
+        }
+    }
+}
+
+extension ButtonStyle where Self == SourcePillButtonStyle {
+    static var spotifyPill: SourcePillButtonStyle { SourcePillButtonStyle(brand: .spotify) }
+    static var applePill: SourcePillButtonStyle { SourcePillButtonStyle(brand: .apple) }
+}
+
+extension NowPlayingService {
+    var isAppleMusicOn: Bool { linkedSources.appleMusicEnabled && appleMusicAccess == .granted }
+    var canOfferSpotify: Bool { spotify.account == nil && spotify.state != .notConfigured }
 }

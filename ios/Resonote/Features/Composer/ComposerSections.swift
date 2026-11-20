@@ -220,26 +220,6 @@ struct ComposerLinkedMusic: View {
     }
 }
 
-/// "What kind of thought is this?" lens chips.
-struct ComposerLensSection: View {
-    let session: ComposerSession
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: RN.Space.s) {
-            ComposerSectionTitle(title: "What kind of thought is this?", note: "Optional. Choose any that help someone find the angle you took.")
-            FlowLayout {
-                ForEach(MusicLens.allCases, id: \.self) { lens in
-                    Chip(lens.rawValue, isSelected: session.lenses.contains(lens)) {
-                        session.toggleEntryLens(lens)
-                    }
-                }
-            }
-            .accessibilityElement(children: .contain)
-            .accessibilityLabel("Lenses")
-        }
-    }
-}
-
 /// "+ What worked for me" / "+ What did not work for me", each revealing its own field.
 struct ComposerReflections: View {
     @Bindable var session: ComposerSession
@@ -287,24 +267,40 @@ struct ComposerReflections: View {
     }
 }
 
-/// Only me / Published. Private comes first and is where every new entry starts.
-struct ComposerVisibility: View {
+/// Lenses as a menu in the bottom bar: a checkmark beside each one chosen.
+struct ComposerLensMenu: View {
+    let session: ComposerSession
+
+    var body: some View {
+        Menu {
+            ForEach(MusicLens.allCases, id: \.self) { lens in
+                Toggle(lens.rawValue.capitalized, isOn: Binding(
+                    get: { session.lenses.contains(lens) },
+                    set: { _ in session.toggleEntryLens(lens) }
+                ))
+            }
+        } label: {
+            Label("Lenses", systemImage: session.lenses.isEmpty ? "tag" : "tag.fill")
+        }
+        .accessibilityValue(session.lenses.map(\.rawValue).joined(separator: ", "))
+    }
+}
+
+/// Only me / Published as one button in the bottom bar. Every note starts private;
+/// the label is as wide as the longer word, so flipping it never moves the bar.
+struct ComposerVisibilityToggle: View {
     @Bindable var session: ComposerSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: RN.Space.s) {
-            ComposerSectionTitle(title: "Who can read this", note: nil)
-            Picker("Who can read this", selection: $session.isPublic) {
-                Text(VisibilityCopy.privateLabel).tag(false)
-                Text(VisibilityCopy.publishedLabel).tag(true)
-            }
-            .pickerStyle(.segmented)
-            .sensoryFeedback(.selection, trigger: session.isPublic)
-            // Both explanations share one cell so the section never changes height.
-            VisibilityNote(isPublic: session.isPublic)
-                .font(.footnote)
-                .foregroundStyle(RN.Palette.muted)
+        Button {
+            session.isPublic.toggle()
+        } label: {
+            VisibilityMarker(isPublic: session.isPublic)
+                .font(.subheadline.weight(.medium))
         }
+        .sensoryFeedback(.selection, trigger: session.isPublic)
+        .accessibilityLabel("Who can read this")
+        .accessibilityValue(VisibilityCopy.marker(isPublic: session.isPublic))
     }
 }
 

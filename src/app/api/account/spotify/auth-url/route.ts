@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { callbackScheme, isValidAuthState, isValidCodeChallenge, spotifyAuthUrl } from '@/lib/music/spotify';
-import { currentUser } from '@/lib/server/auth';
 import { getDb } from '@/lib/server/db';
 import { spotifyConfig, spotifyConfigured } from '@/lib/server/spotify';
 
@@ -13,8 +12,7 @@ export const runtime = 'nodejs';
  */
 export async function GET(request: NextRequest) {
   if (!(await getDb())) return NextResponse.json({ ok: false, error: 'Cloud data is not configured here.' }, { status: 503 });
-  const userId = await currentUser();
-  if (!userId) return NextResponse.json({ ok: false, error: 'Sign in to link Spotify.' }, { status: 401 });
+  // Signed out is fine: the same page is Sign in with Spotify (see ../session).
   const config = await spotifyConfig();
   if (!spotifyConfigured(config)) return NextResponse.json({ ok: false, error: 'Spotify sign-in is not set up on this server.' }, { status: 501 });
 
