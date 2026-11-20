@@ -1,5 +1,7 @@
+import AuthenticationServices
 import ResonoteKit
 import SwiftUI
+import UIKit
 
 // Pieces shared by the Now tab, the now-playing accessory, and the capture sheet.
 
@@ -295,4 +297,81 @@ extension View {
             .allowsHitTesting(visible)
             .accessibilityHidden(!(accessible ?? visible))
     }
+}
+
+// MARK: - Connecting a source
+
+/// "Spotify": one tap runs the whole sign-in. Signed out of Resonote, it asks for that
+/// first and carries on afterward, so it is never grayed out.
+struct SpotifySignInButton: View {
+    var title = "Spotify"
+
+    @Environment(AppModel.self) private var model
+    @Environment(NowPlayingService.self) private var nowPlaying
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @State private var isSigningIn = false
+
+    private var isBusy: Bool { isSigningIn || nowPlaying.spotify.isWorking }
+
+    var body: some View {
+        Button {
+            model.requireAuth { signIn() }
+        } label: {
+            StableLabel(isBusy ? "Signing in…" : title, among: [title, "Signing in…"])
+        }
+        .disabled(isBusy)
+        .accessibilityLabel(isBusy ? "Signing in to Spotify" : "Sign in with Spotify")
+        .accessibilityHint("Opens Spotify to let Resonote read your listening and play songs")
+    }
+
+    /// Authorization Code with PKCE: a fresh verifier and state, Spotify's page, then
+    /// `resonote://spotify-auth?code=…&state=…`, and the server exchanges the code.
+    private func signIn() {
+        isSigningIn = true
+        Task {
+            defer { isSigningIn = false }
+            guard let attempt = await nowPlaying.spotify.begin() else { return }
+            do {
+                let callback = try await webAuthenticationSession.authenticate(using: attempt.url, callbackURLScheme: attempt.callbackScheme)
+                await nowPlaying.spotify.finish(callback: callback, attempt: attempt)
+            } catch {
+                // Closing the Spotify page is a choice, not an error.
+            }
+        }
+    }
+}
+
+/// "Apple Music": asks once for Media & Apple Music; if that was refused, opens Settings.
+struct AppleMusicConnectButton: View {
+    var title = "Apple Music"
+
+    @Environment(NowPlayingService.self) private var nowPlaying
+    @Environment(\.openURL) private var openURL
+    @State private var isRequesting = false
+
+    var body: some View {
+        Button {
+            if nowPlaying.appleMusicAccess == .denied {
+                if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            } else {
+                isRequesting = true
+                Task {
+                    await nowPlaying.requestAppleMusicAccess()
+                    isRequesting = false
+                }
+            }
+        } label: {
+            StableLabel(isRequesting ? "Asking…" : title, among: [title, "Asking…"])
+        }
+        .disabled(isRequesting)
+        .accessibilityLabel("Use Apple Music")
+        .accessibilityHint(nowPlaying.appleMusicAccess == .denied
+                           ? "Opens Settings to allow Media and Apple Music for Resonote"
+                           : "Lets Resonote see what the Music app is playing")
+    }
+}
+
+extension NowPlayingService {
+    var isAppleMusicOn: Bool { linkedSources.appleMusicEnabled && appleMusicAccess == .granted }
+    var canOfferSpotify: Bool { spotify.account == nil && spotify.state != .notConfigured }
 }

@@ -79,7 +79,7 @@ struct NowPlayingCard: View {
                 Text("Nothing playing")
                     .font(RN.Typography.headline)
                     .foregroundStyle(RN.Palette.ink)
-                Text("Play something in Apple Music, or connect Spotify or Last.fm in Settings.")
+                Text(nothingMessage)
                     .font(.subheadline)
                     .foregroundStyle(RN.Palette.muted)
             }
@@ -87,6 +87,14 @@ struct NowPlayingCard: View {
             .accessibilityElement(children: .combine)
             .nowStateLayer(visible: mode == .nothing)
         }
+    }
+
+    private var nothingMessage: String {
+        if let failure = nowPlaying.spotify.failure { return failure }
+        if nowPlaying.canOfferSpotify || !nowPlaying.isAppleMusicOn {
+            return "Connect where you listen, and the song you're playing shows up here."
+        }
+        return "Play something and it shows up here."
     }
 
     // MARK: Status
@@ -145,16 +153,16 @@ struct NowPlayingCard: View {
 
     // MARK: Nothing playing
 
-    /// The action when nothing is playing. With Identify on, the bar above the tabs already
-    /// offers it, so the slot stays empty (its height is still reserved by the Write layer);
-    /// without it, connect a source.
+    /// When nothing is playing: one big button for each source not yet connected, side
+    /// by side in the slot the Write button keeps. Identify lives in the bar above the tabs.
     @ViewBuilder
     private var nothingAction: some View {
-        if !AppFeatures.identify {
-            Button {
-                router.push(.settings)
-            } label: {
-                Label("Connect a source", systemImage: "link")
+        let spotify = nowPlaying.canOfferSpotify
+        let appleMusic = !nowPlaying.isAppleMusicOn
+        if spotify || appleMusic {
+            HStack(spacing: RN.Space.s) {
+                if spotify { SpotifySignInButton() }
+                if appleMusic { AppleMusicConnectButton() }
             }
             .buttonStyle(.solid)
         }
