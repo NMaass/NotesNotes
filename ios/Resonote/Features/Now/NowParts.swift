@@ -76,12 +76,12 @@ struct SpotifyLogo: View {
             let rect = CGRect(x: (size.width - side) / 2, y: (size.height - side) / 2, width: side, height: side)
             context.fill(Path(ellipseIn: rect), with: .color(circle))
             // Three arcs, widest on top, each a little lower and narrower.
-            let waves: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
+            let arcs: [(y: CGFloat, half: CGFloat, lift: CGFloat, width: CGFloat)] = [
                 (0.36, 0.30, 0.10, 0.085),
                 (0.53, 0.25, 0.08, 0.07),
                 (0.68, 0.20, 0.06, 0.06),
             ]
-            for wave in waves {
+            for wave in arcs {
                 var path = Path()
                 let y = rect.minY + side * wave.y
                 path.move(to: CGPoint(x: rect.midX - side * wave.half, y: y))
