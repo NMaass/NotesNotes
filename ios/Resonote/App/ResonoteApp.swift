@@ -1,5 +1,6 @@
 import ResonoteKit
 import SwiftUI
+import UIKit
 
 @main
 struct ResonoteApp: App {
@@ -13,6 +14,17 @@ struct ResonoteApp: App {
         let model = AppModel()
         _model = State(initialValue: model)
         _nowPlaying = State(initialValue: NowPlayingService(model: model))
+        Self.styleLargeTitles()
+    }
+
+    /// Large navigation titles (Now, Journal, an artist) in Georgia, like the app's
+    /// display type, scaled with Dynamic Type. Inline titles stay SF.
+    private static func styleLargeTitles() {
+        let georgia = UIFont(name: "Georgia", size: 34) ?? .systemFont(ofSize: 34)
+        UINavigationBar.appearance().largeTitleTextAttributes = [
+            .font: UIFontMetrics(forTextStyle: .largeTitle).scaledFont(for: georgia),
+            .foregroundColor: UIColor(RN.Palette.ink),
+        ]
     }
 
     var body: some Scene {

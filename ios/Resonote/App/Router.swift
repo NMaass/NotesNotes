@@ -7,6 +7,8 @@ enum Route: Hashable {
     case profile(handle: String)
     case collection(handle: String, id: String)
     case entry(id: String)
+    /// One artist's notes in the owner's journal (`JournalArtistGroup.otherId` for the rest).
+    case journalArtist(id: String)
     /// Writing others have published, newest first. A place the person goes to read,
     /// not the home screen: the Now tab opens on their own listening and notes.
     case feed

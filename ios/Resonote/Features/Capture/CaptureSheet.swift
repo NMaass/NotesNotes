@@ -565,12 +565,7 @@ struct CaptureSheet: View {
                 toggle: toggleLens
             )
             Toggle(isOn: $isPublic) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(VisibilityCopy.publicLabel)
-                    VisibilityNote(isPublic: isPublic)
-                        .font(.footnote)
-                        .foregroundStyle(RN.Palette.muted)
-                }
+                Text(VisibilityCopy.publicLabel)
             }
             .tint(RN.Palette.rust)
         }
@@ -611,12 +606,7 @@ struct CaptureSheet: View {
             genreSection(subject: subject, suggestions: suggestions)
 
             Toggle(isOn: $isPublic) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(VisibilityCopy.publicLabel)
-                    VisibilityNote(isPublic: isPublic)
-                        .font(.footnote)
-                        .foregroundStyle(RN.Palette.muted)
-                }
+                Text(VisibilityCopy.publicLabel)
             }
             .tint(RN.Palette.rust)
         }

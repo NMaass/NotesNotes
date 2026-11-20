@@ -2,7 +2,7 @@ import ResonoteKit
 import SwiftUI
 
 // Pure helpers and small infrastructure shared by the Journal, profile, and
-// collection screens. Nothing here renders on its own.
+// collection screens, plus the Journal draft rows.
 
 /// A catalog row a screen needs, by kind and id. `kind` is nil when only the id is
 /// known (a pinned entity); the row is then looked up as a song, album, or artist.
@@ -328,5 +328,193 @@ struct JournalTag: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 3)
             .overlay(Capsule().strokeBorder(RN.Palette.line))
+    }
+}
+
+// MARK: - Drafts
+
+/// Unfinished drafts at the top of Journal: plain rows that read and reload themselves
+/// whenever a sheet closes, the app returns, or the signed-in person changes.
+struct JournalDraftsSection: View {
+    @Environment(AppModel.self) private var model
+    @Environment(Router.self) private var router
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var drafts: [NowDraftRow] = []
+    @State private var hasReadDrafts = false
+    @State private var draftReads = 0
+
+    private static let draftLimit = 5
+
+    var body: some View {
+        Group {
+            if !drafts.isEmpty {
+                NowDraftsList(drafts: drafts)
+            }
+        }
+        .onAppear {
+            if hasReadDrafts {
+                draftReads += 1
+            } else {
+                // The first read is inline (a few small files), so the rows are there with the first frame.
+                hasReadDrafts = true
+                drafts = Self.draftRows(NowDrafts.read(limit: Self.draftLimit, from: model.drafts), catalog: model.catalog)
+            }
+        }
+        .task(id: draftReads) {
+            guard draftReads > 0 else { return }
+            await reloadDrafts()
+        }
+        .onChange(of: router.sheet) { _, sheet in
+            if sheet == nil { draftReads += 1 }
+        }
+        // The share extension may have kept a draft while the app was away.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { draftReads += 1 }
+        }
+        // Drafts belong to whoever is signed in.
+        .onChange(of: model.ownerId) { _, _ in draftReads += 1 }
+        // A note written first found its song.
+        .onChange(of: model.writtenNotesAttached) { _, _ in draftReads += 1 }
+    }
+
+    /// Reads the newest drafts away from the main actor and swaps the rows in one batch.
+    private func reloadDrafts() async {
+        let found = await NowDrafts.load(limit: Self.draftLimit, from: model.drafts)
+        guard !Task.isCancelled else { return }
+        let rows = Self.draftRows(found, catalog: model.catalog)
+        if rows != drafts { drafts = rows }
+    }
+
+    private static func draftRows(_ drafts: [Draft], catalog: CatalogIndex) -> [NowDraftRow] {
+        let now = Date()
+        return drafts.map { NowDraftRow(draft: $0, catalog: catalog, now: now) }
+    }
+}
+
+/// The newest drafts with words in them, decoding only as many files as needed.
+nonisolated enum NowDrafts {
+    static func read(limit: Int, from store: DraftStore) -> [Draft] {
+        store.recent(limit: limit) { draft in
+            !draft.document.isBlank || !draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+    }
+
+    @concurrent
+    static func load(limit: Int, from store: DraftStore) async -> [Draft] {
+        read(limit: limit, from: store)
+    }
+}
+
+// MARK: - Drafts
+
+/// A draft as the Now tab shows it, with every string precomputed.
+struct NowDraftRow: Identifiable, Equatable {
+    let id: String
+    let kind: EntityKind
+    let entityId: String
+    let entryId: String?
+    /// Words about a song not matched yet: opening it matches the song first.
+    let unmatchedTrack: NowPlayingTrack?
+    /// A note written before its song was known: it opens in capture, to save it or
+    /// change its song.
+    let noteKey: String?
+    let name: String
+    let preview: String
+    let artworkURL: String?
+    let edited: String
+
+    init(draft: Draft, catalog: CatalogIndex, now: Date) {
+        let entity = draft.isUnmatched ? nil : catalog.entity(kind: draft.entityKind, id: draft.entityId)
+        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let firstLine = draft.document.plainText
+            .split(whereSeparator: \.isNewline)
+            .first
+            .map(String.init) ?? ""
+        id = draft.key
+        kind = draft.entityKind
+        entityId = draft.entityId
+        entryId = draft.entryId
+        unmatchedTrack = draft.isUnmatched ? draft.track : nil
+        noteKey = draft.isWrittenFirst ? draft.key : nil
+        let fallbackName = draft.isWaitingForSong ? "Waiting for its song" : (title.isEmpty ? "\(draft.entityKind.label) draft" : title)
+        name = entity?.name ?? draft.track?.title ?? fallbackName
+        preview = firstLine.isEmpty ? (title.isEmpty ? "No words yet" : title) : firstLine
+        artworkURL = entity.flatMap { catalog.artworkURL(for: $0) } ?? draft.track?.artworkURL
+        let age = NowRelativeTime.phrase(since: draft.updatedAt, now: now)
+        if draft.isWrittenFirst {
+            if draft.isWaitingForSong {
+                edited = "Written \(NowRelativeTime.phrase(since: draft.writtenAt ?? draft.updatedAt, now: now))"
+            } else {
+                edited = draft.attachment == .automatic ? "Attached automatically · change" : age
+            }
+        } else if draft.isUnmatched {
+            edited = "Not matched yet · \(age)"
+        } else {
+            edited = draft.entryId == nil ? age : "Editing · \(age)"
+        }
+    }
+}
+
+private struct NowDraftsList: View {
+    let drafts: [NowDraftRow]
+
+    @Environment(Router.self) private var router
+    @Environment(NowPlayingService.self) private var nowPlaying
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ForEach(drafts) { row in
+                Button {
+                    open(row)
+                } label: {
+                    NowDraftRowView(row: row)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens the draft")
+                Divider()
+                    .overlay(RN.Palette.line)
+                    .padding(.leading, JournalRow.textInset)
+            }
+        }
+    }
+
+    private func open(_ row: NowDraftRow) {
+        if let noteKey = row.noteKey {
+            router.present(.capture(CapturePreset(origin: "note", noteKey: noteKey)))
+        } else if let track = row.unmatchedTrack {
+            // Match the song first; once it is, the words join that song's draft.
+            nowPlaying.present(track)
+            router.present(.capture(CapturePreset(origin: "draft")))
+        } else {
+            router.present(.compose(ComposerContext(entityKind: row.kind, entityId: row.entityId, entryId: row.entryId)))
+        }
+    }
+}
+
+private struct NowDraftRowView: View {
+    let row: NowDraftRow
+
+    var body: some View {
+        HStack(spacing: RN.Space.m) {
+            ArtworkView(row.artworkURL, title: row.name, size: JournalRow.artSize)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.name)
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(RN.Palette.ink)
+                    .lineLimit(1)
+                Text("\(row.edited) · \(row.preview)")
+                    .font(.subheadline)
+                    .foregroundStyle(RN.Palette.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: RN.Space.s)
+            Text("Draft")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(RN.Palette.rustText)
+        }
+        .padding(.vertical, RN.Space.m)
+        .contentShape(Rectangle())
+        .accessibilityElement(children: .combine)
     }
 }
